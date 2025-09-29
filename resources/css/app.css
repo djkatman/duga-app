@@ -1,0 +1,7 @@
+@import "tailwindcss";
+
+/* LaravelのBladeなどをスキャン対象にする宣言（v4の新構文） */
+@source "../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php";
+@source "../../storage/framework/views/*.php";
+@source "../**/*.blade.php";
+@source "../**/*.js";
