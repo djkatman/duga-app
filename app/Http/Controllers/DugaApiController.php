@@ -9,78 +9,92 @@ use App\Utils\ConvertObject;
 use Illuminate\Support\Arr;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class DugaApiController extends Controller
 {
-   public function index(Request $request)
-    {
-        // 入力（デフォルトは人気順・40件/ページ）
-        $page     = max(1, (int) $request->integer('page', 1));
-        $perPage  = max(1, min(100, (int) $request->integer('per_page', 60)));
-        $sort     = $request->input('sort', 'favorite');
 
-        // offset (DUGA API は 1-based)
-        $offset   = ($page - 1) * $perPage + 1;
+public function index(Request $request)
+{
+    $page     = max(1, (int) $request->integer('page', 1));
+    $perPage  = max(1, min(100, (int) $request->integer('per_page', 60)));
+    $sort     = $request->input('sort', 'favorite');
+    $offset   = ($page - 1) * $perPage + 1;
 
-        // キャッシュキーを組み立てる
-        $cacheKey = sprintf("duga:index:sort:%s:page:%d:perPage:%d", $sort, $page, $perPage);
+    // nocache=1 で一時的にキャッシュ無効化可能
+    $noCache  = (bool) $request->boolean('nocache', false);
+
+    $cacheKey = sprintf("duga:index:v1:sort:%s:page:%d:per:%d", $sort, $page, $perPage);
+
+    $data = $noCache
+        ? null
+        : Cache::get($cacheKey);
+
+    // if (!$data) {
+        $endpoint = 'http://affapi.duga.jp/search';
+        $resp = Http::timeout(10)->retry(2, 200)->get($endpoint, [
+            'appid'    => env('APEX_APP_ID'),
+            'agentid'  => env('APEX_AGENT_ID'),
+            'version'  => env('APEX_API_VERSION', '1.2'),
+            'format'   => env('APEX_FORMAT', 'json'),
+            'adult'    => env('APEX_ADULT', 1),
+            'bannerid' => env('APEX_BANNER_ID'),
+            'sort'     => $sort,
+            'hits'     => $perPage,
+            'offset'   => $offset,
+        ]);
+
+        if ($resp->failed()) {
+            abort(500, 'Failed to fetch data from DUGA API');
+        }
+
+        $json = $resp->json();
+
+        if (!is_array($json)) {
+            abort(500, 'Invalid JSON response from DUGA API');
+        }
+
+        // 取得直後の形を軽く記録（本番では log level 調整可）
+        Log::debug('duga:index raw keys', ['keys' => array_keys($json)]);
 
         // 30分キャッシュ
-        $data = Cache::remember($cacheKey, now()->addMinutes(30), function () use ($sort, $perPage, $offset) {
-            $endpoint = 'http://affapi.duga.jp/search';
-            $response = Http::timeout(10)->retry(2, 200)->get($endpoint, [
-                'appid'    => env('APEX_APP_ID'),
-                'agentid'  => env('APEX_AGENT_ID'),
-                'version'  => env('APEX_API_VERSION', '1.2'),
-                'format'   => env('APEX_FORMAT', 'json'),
-                'adult'    => env('APEX_ADULT', 1),
-                'bannerid' => env('APEX_BANNER_ID'),
-                'sort'     => $sort,
-                'hits'     => $perPage,
-                'offset'   => $offset,
-            ]);
+        Cache::put($cacheKey, $json, now()->addMinutes(30));
+        $data = $json;
+    // }
 
-            if ($response->failed()) {
-                abort(500, 'Failed to fetch data from DUGA API');
-            }
+    // ★ 正規化してからオブジェクト化
+    $itemsRaw = $this->extractItems($data);
+    $total    = $this->extractTotal($data);
 
-            $json = $response->json();
-            if (!is_array($json)) {
-                abort(500, 'Invalid JSON response from DUGA API');
-            }
-
-            return $json;
-        });
-
-        // items / total を取り出す
-        $itemsRaw = Arr::get($data, 'items', []);
-        $total    = (int) (
-            Arr::get($data, 'count')
-            ?? Arr::get($data, 'count.total')
-            ?? Arr::get($data, 'results')
-            ?? 0
-        );
-
-        // オブジェクト化
-        $objects = ConvertObject::arrayToObject($itemsRaw);
-
-        // ページネータ作成
-        $paginator = new LengthAwarePaginator(
-            $objects,
-            $total ?: ($page * $perPage),
-            $perPage,
-            $page,
-            [
-                'path'  => route('home'),
-                'query' => $request->query(),
-            ]
-        );
-
-        return view('index', [
-            'items' => $paginator,
-            'sort'  => $sort,
+    // デバッグ用：空のときは keys をログに出す
+    if (empty($itemsRaw)) {
+        Log::warning('duga:index items empty', [
+            'sort'   => $sort,
+            'page'   => $page,
+            'per'    => $perPage,
+            'keys'   => array_keys($data),
+            'sample' => array_slice($data, 0, 3, true),
         ]);
     }
+
+    $objects = ConvertObject::arrayToObject($itemsRaw);
+
+    $paginator = new LengthAwarePaginator(
+        $objects,
+        $total ?: ($page * $perPage),
+        $perPage,
+        $page,
+        [
+            'path'  => route('home'),
+            'query' => $request->query(),
+        ]
+    );
+
+    return view('index', [
+        'items' => $paginator,
+        'sort'  => $sort,
+    ]);
+}
 
     public function show(string $id, Request $request)
     {
@@ -89,7 +103,7 @@ class DugaApiController extends Controller
 
         // 24時間キャッシュ
         $item = Cache::remember($cacheKey, now()->addDay(), function () use ($id) {
-            $endpoint = 'http://affapi.duga.jp/search';
+            $endpoint = 'https://affapi.duga.jp/search';
 
             $resp = Http::timeout(10)->retry(2, 200)->get($endpoint, [
                 'appid'     => env('APEX_APP_ID'),
@@ -113,7 +127,7 @@ class DugaApiController extends Controller
                 abort(502, 'Invalid JSON response from DUGA API');
             }
 
-            $itemsRaw = Arr::get($data, 'items', []);
+            $itemsRaw = $this->extractItems($data);
             // 2重配列のケースに対応
             if (!empty($itemsRaw) && is_array($itemsRaw) && isset($itemsRaw[0]) && is_array($itemsRaw[0]) && Arr::isAssoc($itemsRaw[0]) === false) {
                 $itemsRaw = $itemsRaw[0];
@@ -144,7 +158,7 @@ class DugaApiController extends Controller
     {
         // ページング入力
         $page    = max(1, (int) $request->integer('page', 1));
-        $perPage = max(1, min(100, (int) $request->integer('per_page', 40)));
+        $perPage = max(1, min(100, (int) $request->integer('per_page', 60)));
         $sort    = $request->input('sort', 'favorite');
         $offset  = ($page - 1) * $perPage + 1;
 
@@ -170,7 +184,7 @@ class DugaApiController extends Controller
 
         // 30分キャッシュ
         $data = Cache::remember($cacheKey, now()->addMinutes(30), function () use ($filterKey, $id, $sort, $perPage, $offset) {
-            $endpoint = 'http://affapi.duga.jp/search';
+            $endpoint = 'https://affapi.duga.jp/search';
             $resp = Http::timeout(10)->retry(2, 200)->get($endpoint, [
                 'appid'     => env('APEX_APP_ID'),
                 'agentid'   => env('APEX_AGENT_ID'),
@@ -191,19 +205,16 @@ class DugaApiController extends Controller
             return $json;
         });
 
-        $itemsRaw = Arr::get($data, 'items', []);
+        $itemsRaw = $this->extractItems($data);
         // 二重配列対応
         if (!empty($itemsRaw) && is_array($itemsRaw) && isset($itemsRaw[0]) && is_array($itemsRaw[0]) && !Arr::isAssoc($itemsRaw[0])) {
             $itemsRaw = $itemsRaw[0];
         }
 
         $objects = ConvertObject::arrayToObject($itemsRaw);
+        $currentCount = count($objects);
 
-        $total = (int) (
-            Arr::get($data, 'total')
-            ?? Arr::get($data, 'count.total')
-            ?? 0
-        );
+        $total    = $this->extractTotal($data);
 
         // ===== フィルター名取得 =====
         $filterName = '';
@@ -288,9 +299,15 @@ class DugaApiController extends Controller
             }
         }
 
+        $effectiveTotal = $total > 0
+            ? $total
+            : ($currentCount === $perPage
+                ? ($page * $perPage + 1)
+                : (($page - 1) * $perPage + $currentCount));
+
         $paginator = new LengthAwarePaginator(
             $objects,
-            $total ?: ($page * $perPage),
+            $effectiveTotal,
             $perPage,
             $page,
             [
@@ -320,7 +337,7 @@ class DugaApiController extends Controller
     {
         $q       = trim((string) $request->query('q', ''));
         $page    = max(1, (int) $request->integer('page', 1));
-        $perPage = max(1, min(100, (int) $request->integer('per_page', 40)));
+        $perPage = max(1, min(100, (int) $request->integer('per_page', 60)));
         $sort    = $request->query('sort', 'favorite');
         $offset  = ($page - 1) * $perPage + 1;
 
@@ -351,7 +368,7 @@ class DugaApiController extends Controller
 
         // ===== API 呼び出しを 30分キャッシュ =====
         $data = Cache::remember($cacheKey, now()->addMinutes(30), function () use ($q, $sort, $perPage, $offset) {
-            $endpoint = 'http://affapi.duga.jp/search';
+            $endpoint = 'https://affapi.duga.jp/search';
             $resp = Http::timeout(10)->retry(2, 200)->get($endpoint, [
                 'appid'     => env('APEX_APP_ID'),
                 'agentid'   => env('APEX_AGENT_ID'),
@@ -372,22 +389,25 @@ class DugaApiController extends Controller
             return $json;
         });
 
-        $itemsRaw = Arr::get($data, 'items', []);
+        $itemsRaw = $this->extractItems($data);
         if (!empty($itemsRaw) && is_array($itemsRaw) && isset($itemsRaw[0]) && is_array($itemsRaw[0]) && !Arr::isAssoc($itemsRaw[0])) {
             $itemsRaw = $itemsRaw[0];
         }
 
         $objects = ConvertObject::arrayToObject($itemsRaw);
+        $currentCount = count($objects);
 
-        $total = (int) (
-            Arr::get($data, 'total')
-            ?? Arr::get($data, 'count.total')
-            ?? 0
-        );
+        $total    = $this->extractTotal($data);
+
+        $effectiveTotal = $total > 0
+        ? $total
+        : ($currentCount === $perPage
+            ? ($page * $perPage + 1)
+            : (($page - 1) * $perPage + $currentCount));
 
         $paginator = new LengthAwarePaginator(
             $objects,
-            $total ?: ($page * $perPage),
+            $effectiveTotal,
             $perPage,
             $page,
             [
@@ -475,7 +495,7 @@ class DugaApiController extends Controller
         $key = 'duga:search:'.md5(json_encode($extraParams).':'.$hits);
 
         return Cache::remember($key, now()->addMinutes(30), function () use ($extraParams, $hits) {
-            $endpoint = 'http://affapi.duga.jp/search';
+            $endpoint = 'https://affapi.duga.jp/search';
             $query = array_merge([
                 'appid'     => env('APEX_APP_ID'),
                 'agentid'   => env('APEX_AGENT_ID'),
@@ -501,5 +521,45 @@ class DugaApiController extends Controller
             }
             return is_array($items) ? $items : [];
         });
+    }
+
+    private function extractItems(array $data): array
+    {
+        // まず items を取得
+        $items = Arr::get($data, 'items', []);
+
+        // パターン3: items.item
+        if (is_array($items) && isset($items['item']) && is_array($items['item'])) {
+            $items = $items['item'];
+        }
+
+        // パターン2: items[0] が配列かつ非連想 → 2重配列の内側を使う
+        if (is_array($items) && !empty($items) && isset($items[0]) && is_array($items[0]) && !Arr::isAssoc($items[0])) {
+            $items = $items[0];
+        }
+
+        // すでに行配列なら返す
+        if (is_array($items) && !empty($items) && isset($items[0]) && is_array($items[0]) && Arr::isAssoc($items[0])) {
+            return $items;
+        }
+
+        // まれに root が行配列
+        if (empty($items) && isset($data[0]) && is_array($data[0]) && Arr::isAssoc($data[0])) {
+            return $data;
+        }
+
+        return is_array($items) ? $items : [];
+    }
+
+    /** 総件数を多様なキーから拾う */
+    private function extractTotal(array $data): int
+    {
+        return (int) (
+            Arr::get($data, 'total')
+            ?? Arr::get($data, 'count.total')
+            ?? Arr::get($data, 'count')
+            ?? Arr::get($data, 'results')
+            ?? 0
+        );
     }
 }

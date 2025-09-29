@@ -78,7 +78,7 @@
   {{-- Footer --}}
   <footer class="mt-12 border-t border-gray-200 bg-white">
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 text-sm text-gray-600">
-      <p>© {{ date('Y') }} DUGAサンプル動画見放題 — これはデモサイトです。</p>
+      <p>© {{ date('Y') }} DUGAサンプル動画見放題</p>
     </div>
   </footer>
 

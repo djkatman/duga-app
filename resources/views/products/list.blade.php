@@ -184,7 +184,7 @@
     </div>
 
     <div class="mt-6">
-      {{ $items->withQueryString()->links() }}
+      @include('partials.pagination', ['paginator' => $items])
     </div>
   @endif
 @endsection
