@@ -5,139 +5,177 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Arr;
-use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Carbon;
+use App\Models\DugaProduct;
 
 class SitemapController extends Controller
 {
-    // 取り込む商品のページ数（1ページ=hits件）
-    private int $productPages = 5;   // 例: 5ページ分
-    private int $hitsPerPage  = 60;  // DUGA API の1ページ件数
+    /** ===== 調整ポイント（必要に応じて変更） ===== */
+    // 商品サイトマップの「1ファイルあたりの件数」
+    private int $productsPerFile = 1200;
 
+    // 一覧の sort とページ数
+    private array $sortsForLists = ['favorite','new','release','price','rating','mylist'];
+    private int   $listPagesPerSort = 10; // 各 sort の 1〜10 ページをサイトマップに載せる
+
+    /**
+     * /sitemap.xml : サイトマップインデックス
+     */
     public function index(Request $request)
     {
-        // nocache=1 で強制再生成できるように
-        $noCache = (bool) $request->boolean('nocache', false);
-
-        $xml = $noCache ? null : Cache::get('sitemap:xml:v1');
+        $noCache  = (bool)$request->boolean('nocache', false);
+        $cacheKey = 'sitemap:index:v2-db';
+        $xml      = $noCache ? null : Cache::get($cacheKey);
 
         if (!$xml) {
-            $urls = [];
+            $entries = [];
 
-            // 1) 固定ページ（必要に応じて増やす）
-            $urls[] = [
-                'loc'        => route('home'),
-                'changefreq' => 'hourly',
-                'priority'   => '1.0',
-                'lastmod'    => now()->toAtomString(),
-            ];
-            // 人気順/新着順のトップ1ページ（任意）
-            $urls[] = [
-                'loc'        => route('home', ['sort' => 'favorite']),
-                'changefreq' => 'hourly',
-                'priority'   => '0.9',
-                'lastmod'    => now()->toAtomString(),
-            ];
-            $urls[] = [
-                'loc'        => route('home', ['sort' => 'new']),
-                'changefreq' => 'hourly',
-                'priority'   => '0.9',
-                'lastmod'    => now()->toAtomString(),
+            // 1) トップ/一覧（固定1ファイル）
+            $entries[] = [
+                'loc'     => route('sitemap.lists'),
+                'lastmod' => now()->toAtomString(),
             ];
 
-            // 2) 商品詳細（最新 N ページ分をAPIから取得）
-            //    new（新着）をベースに拾うのが自然。favorite にしたい場合は sort を変更。
-            $sort = 'new';
-            for ($page = 1; $page <= $this->productPages; $page++) {
-                $items = $this->fetchItemsFromDuga($sort, $this->hitsPerPage, $page);
+            // 2) 商品サイトマップ（DB件数から自動で分割数を算出）
+            $totalProducts = DugaProduct::count();
+            $files = max(1, (int) ceil($totalProducts / $this->productsPerFile));
 
-                foreach ($items as $row) {
-                    $pid = Arr::get($row, 'productid');
-                    if (!$pid) continue;
-
-                    // release/open 日付を lastmod に利用（なければ今日）
-                    $lastmod = Arr::get($row, 'releasedate')
-                             ?: Arr::get($row, 'opendate')
-                             ?: now()->toDateString();
-
-                    $urls[] = [
-                        'loc'        => route('products.show', ['id' => $pid]),
-                        'changefreq' => 'weekly',
-                        'priority'   => '0.8',
-                        'lastmod'    => \Illuminate\Support\Carbon::parse($lastmod)->toAtomString(),
-                    ];
-                }
+            for ($i = 1; $i <= $files; $i++) {
+                $entries[] = [
+                    'loc'     => route('sitemap.products', ['n' => $i]),
+                    'lastmod' => now()->toAtomString(),
+                ];
             }
 
-            // 3) URL を XML に整形（urlset）
-            $xml = $this->buildUrlset($urls);
-
-            // 12時間キャッシュ
-            Cache::put('sitemap:xml:v1', $xml, now()->addHours(12));
+            $xml = $this->buildSitemapIndex($entries);
+            Cache::put($cacheKey, $xml, now()->addHours(12));
         }
 
         return response($xml, 200, ['Content-Type' => 'application/xml; charset=UTF-8']);
     }
 
-    /** DUGA API 呼び出し→ items（行配列）を返す */
-    private function fetchItemsFromDuga(string $sort, int $hits, int $page): array
+    /**
+     * /sitemap-lists.xml : トップ＆一覧（sort × page）
+     */
+    public function lists(Request $request)
     {
-        $offset = ($page - 1) * $hits + 1;
+        $noCache  = (bool)$request->boolean('nocache', false);
+        $cacheKey = 'sitemap:lists:v2-db';
+        $xml      = $noCache ? null : Cache::get($cacheKey);
 
-        $resp = Http::timeout(10)->retry(2, 200)->get('https://affapi.duga.jp/search', [
-            'appid'    => env('APEX_APP_ID'),
-            'agentid'  => env('APEX_AGENT_ID'),
-            'version'  => env('APEX_API_VERSION', '1.2'),
-            'format'   => env('APEX_FORMAT', 'json'),
-            'adult'    => env('APEX_ADULT', 1),
-            'bannerid' => env('APEX_BANNER_ID'),
-            'sort'     => $sort,
-            'hits'     => $hits,
-            'offset'   => $offset,
-        ]);
+        if (!$xml) {
+            $urls = [];
 
-        if ($resp->failed()) return [];
+            // トップ
+            $urls[] = $this->urlRow(route('home'), 'hourly', '1.0', now()->toAtomString());
 
-        $data = $resp->json();
-        if (!is_array($data)) return [];
+            // sort つき 1ページ目（便利リンク）
+            foreach ($this->sortsForLists as $sort) {
+                $urls[] = $this->urlRow(route('home', ['sort' => $sort]), 'hourly', '0.9', now()->toAtomString());
+            }
 
-        return $this->extractItems($data);
+            // 各 sort の複数ページ（?page=1..N）
+            foreach ($this->sortsForLists as $sort) {
+                for ($p = 1; $p <= $this->listPagesPerSort; $p++) {
+                    $urls[] = $this->urlRow(
+                        route('home', ['sort' => $sort, 'page' => $p]),
+                        'daily',
+                        '0.8',
+                        now()->toAtomString()
+                    );
+                }
+            }
+
+            $xml = $this->buildUrlset($urls);
+            Cache::put($cacheKey, $xml, now()->addHours(12));
+        }
+
+        return response($xml, 200, ['Content-Type' => 'application/xml; charset=UTF-8']);
     }
 
-    /** API の items 形を正規化（DugaApiController と同じロジック） */
-    private function extractItems(array $data): array
+    /**
+     * /sitemap-products-{n}.xml : 商品詳細（分割ファイル）
+     * n は 1 から index が示す件数まで
+     */
+    public function products(Request $request, int $n)
     {
-        $items = Arr::get($data, 'items', []);
+        // index と同じロジックで実ファイル数を算出してガード
+        $totalProducts = DugaProduct::count();
+        $files = max(1, (int) ceil($totalProducts / $this->productsPerFile));
+        abort_unless($n >= 1 && $n <= $files, 404);
 
-        if (is_array($items) && isset($items['item']) && is_array($items['item'])) {
-            $items = $items['item'];
+        $noCache  = (bool)$request->boolean('nocache', false);
+        $cacheKey = "sitemap:products:v2-db:part:{$n}";
+        $xml      = $noCache ? null : Cache::get($cacheKey);
+
+        if (!$xml) {
+            $urls = [];
+
+            // 並び順は「新しい順」を想定
+            // release_date desc → open_date desc → id desc の擬似ソート
+            $query = DugaProduct::query()
+                ->orderByRaw('CASE WHEN release_date IS NULL THEN 1 ELSE 0 END, release_date DESC')
+                ->orderByRaw('CASE WHEN open_date IS NULL THEN 1 ELSE 0 END, open_date DESC')
+                ->orderByDesc('id');
+
+            $offset = ($n - 1) * $this->productsPerFile;
+            $products = $query->skip($offset)->take($this->productsPerFile)->get([
+                'productid','release_date','open_date','updated_at'
+            ]);
+
+            foreach ($products as $p) {
+                $last = $p->release_date ?? $p->open_date ?? $p->updated_at ?? now();
+                if (!$last instanceof Carbon) {
+                    $last = Carbon::parse((string)$last);
+                }
+                $urls[] = $this->urlRow(
+                    route('products.show', ['id' => $p->productid]),
+                    'weekly',
+                    '0.8',
+                    $last->toAtomString()
+                );
+            }
+
+            $xml = $this->buildUrlset($urls);
+            Cache::put($cacheKey, $xml, now()->addHours(12));
         }
-        if (is_array($items) && !empty($items) && isset($items[0]) && is_array($items[0]) && !Arr::isAssoc($items[0])) {
-            $items = $items[0];
-        }
-        if (is_array($items) && !empty($items) && isset($items[0]) && is_array($items[0]) && Arr::isAssoc($items[0])) {
-            return $items;
-        }
-        if (empty($items) && isset($data[0]) && is_array($data[0]) && Arr::isAssoc($data[0])) {
-            return $data;
-        }
-        return is_array($items) ? $items : [];
+
+        return response($xml, 200, ['Content-Type' => 'application/xml; charset=UTF-8']);
     }
 
-    /** urlset を生成 */
+    /** ===== 共通ユーティリティ ===== */
+
+    private function urlRow(string $loc, string $changefreq = 'weekly', string $priority = '0.5', ?string $lastmod = null): array
+    {
+        return [
+            'loc'        => $loc,
+            'changefreq' => $changefreq,
+            'priority'   => $priority,
+            'lastmod'    => $lastmod ?: now()->toAtomString(),
+        ];
+    }
+
     private function buildUrlset(array $urls): string
     {
-        $escape = fn($v) => htmlspecialchars($v, ENT_XML1 | ENT_COMPAT, 'UTF-8');
+        // loc をキーに重複除去
+        $uniq = [];
+        foreach ($urls as $u) {
+            if (!empty($u['loc'])) {
+                $uniq[$u['loc']] = $u;
+            }
+        }
+        $urls = array_values($uniq);
+
+        $esc = fn($v) => htmlspecialchars($v, ENT_XML1 | ENT_COMPAT, 'UTF-8');
 
         $lines = [];
         $lines[] = '<?xml version="1.0" encoding="UTF-8"?>';
         $lines[] = '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
         foreach ($urls as $u) {
-            $loc        = $escape($u['loc']);
-            $lastmod    = $escape($u['lastmod'] ?? now()->toAtomString());
-            $changefreq = $escape($u['changefreq'] ?? 'weekly');
-            $priority   = $escape($u['priority'] ?? '0.5');
+            $loc        = $esc($u['loc']);
+            $lastmod    = $esc($u['lastmod'] ?? now()->toAtomString());
+            $changefreq = $esc($u['changefreq'] ?? 'weekly');
+            $priority   = $esc($u['priority'] ?? '0.5');
 
             $lines[] = '  <url>';
             $lines[] = "    <loc>{$loc}</loc>";
@@ -147,6 +185,26 @@ class SitemapController extends Controller
             $lines[] = '  </url>';
         }
         $lines[] = '</urlset>';
+
+        return implode("\n", $lines);
+    }
+
+    private function buildSitemapIndex(array $entries): string
+    {
+        $esc = fn($v) => htmlspecialchars($v, ENT_XML1 | ENT_COMPAT, 'UTF-8');
+
+        $lines = [];
+        $lines[] = '<?xml version="1.0" encoding="UTF-8"?>';
+        $lines[] = '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">';
+        foreach ($entries as $e) {
+            $loc     = $esc($e['loc']);
+            $lastmod = $esc($e['lastmod'] ?? now()->toAtomString());
+            $lines[] = '  <sitemap>';
+            $lines[] = "    <loc>{$loc}</loc>";
+            $lines[] = "    <lastmod>{$lastmod}</lastmod>";
+            $lines[] = '  </sitemap>';
+        }
+        $lines[] = '</sitemapindex>';
 
         return implode("\n", $lines);
     }

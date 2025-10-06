@@ -1,41 +1,59 @@
-{{-- resources/views/products/show.blade.php --}}
+{{-- resources/views/products/show.blade.php（安全版） --}}
 @extends('layouts.app')
 
 @php
-  // ===== ユーティリティ =====
-  $has = fn($obj, $m) => is_object($obj) && method_exists($obj, $m);
+  // ===== ユーティリティ（安全版） =====
+  $has  = fn($obj, $m) => is_object($obj) && method_exists($obj, $m);
+  $hasP = fn($obj, $p) => is_object($obj) && property_exists($obj, $p);
 
-  // メイン情報
+  // $item が未定義 / null の場合のガード
+  $item = $item ?? null;
+
+  // メイン情報（すべて $has 経由）
   $title        = $has($item,'getTitle')         ? $item->getTitle()         : '';
-  $origTitle    = $has($item,'getOriginaltitle') ? $item->getOriginaltitle() : ($has($item,'getOriginalTitle') ? $item->getOriginalTitle() : '');
+  $origTitle    = $has($item,'getOriginaltitle') ? $item->getOriginaltitle()
+                  : ($has($item,'getOriginalTitle') ? $item->getOriginalTitle() : '');
   $caption      = $has($item,'getCaption')       ? $item->getCaption()       : '';
-  $maker        = $has($item,'getMakername')     ? $item->getMakername()     : ($has($item,'getMakerName') ? $item->getMakerName() : '');
+  $maker        = $has($item,'getMakername')     ? $item->getMakername()
+                  : ($has($item,'getMakerName') ? $item->getMakerName() : '');
   $url          = $has($item,'getUrl')           ? $item->getUrl()           : '';
-  $affUrl       = $has($item,'getAffiliateurl')  ? $item->getAffiliateurl()  : ($has($item,'getAffiliateUrl') ? $item->getAffiliateUrl() : '');
-  $openDate     = $has($item,'getOpendate')      ? $item->getOpendate()      : ($has($item,'getOpenDate') ? $item->getOpenDate() : '');
-  $releaseDate  = $has($item,'getReleasedate')   ? $item->getReleasedate()   : ($has($item,'getReleaseDate') ? $item->getReleaseDate() : '');
-  $itemNo       = $has($item,'getItemno')        ? $item->getItemno()        : ($has($item,'getItemNo') ? $item->getItemNo() : '');
+  $affUrl       = $has($item,'getAffiliateurl')  ? $item->getAffiliateurl()
+                  : ($has($item,'getAffiliateUrl') ? $item->getAffiliateUrl() : '');
+  $openDate     = $has($item,'getOpendate')      ? $item->getOpendate()
+                  : ($has($item,'getOpenDate') ? $item->getOpenDate() : '');
+  $releaseDate  = $has($item,'getReleasedate')   ? $item->getReleasedate()
+                  : ($has($item,'getReleaseDate') ? $item->getReleaseDate() : '');
+  $itemNo       = $has($item,'getItemno')        ? $item->getItemno()
+                  : ($has($item,'getItemNo') ? $item->getItemNo() : '');
   $price        = $has($item,'getPrice')         ? $item->getPrice()         : null;
   $volume       = $has($item,'getVolume')        ? $item->getVolume()        : '';
-  $rankingTotal = $has($item,'getRanking')       ? $item->getRanking()       : (property_exists($item,'rankingTotal') ? $item->rankingTotal : null);
-  $mylistTotal  = $has($item,'getMylist')        ? $item->getMylist()        : (property_exists($item,'mylistTotal') ? $item->mylistTotal : null);
 
-  // 画像
+  // ランキング/マイリスト（property_exists は is_object 前提の $hasP 経由）
+  $rankingTotal = $has($item,'getRanking') ? $item->getRanking()
+                  : ($hasP($item,'rankingTotal') ? $item->rankingTotal : null);
+  $mylistTotal  = $has($item,'getMylist')  ? $item->getMylist()
+                  : ($hasP($item,'mylistTotal')  ? $item->mylistTotal  : null);
+
+  // 画像（中間オブジェクトにも is_object ガード）
   $poster = $has($item,'getPosterImage') ? $item->getPosterImage() : null;
-  $posterSmall  = $poster && method_exists($poster,'getSmall')  ? $poster->getSmall()  : null;
-  $posterMedium = $poster && method_exists($poster,'getMedium') ? $poster->getMedium() : (method_exists($poster,'getMidium') ? $poster->getMidium() : null);
-  $posterLarge  = $poster && method_exists($poster,'getLarge')  ? $poster->getLarge()  : null;
+  $posterSmall  = (is_object($poster) && method_exists($poster,'getSmall'))  ? $poster->getSmall()  : null;
+  $posterMedium = (is_object($poster) && (method_exists($poster,'getMedium') || method_exists($poster,'getMidium')))
+                  ? (method_exists($poster,'getMedium') ? $poster->getMedium() : $poster->getMidium())
+                  : null;
+  $posterLarge  = (is_object($poster) && method_exists($poster,'getLarge'))  ? $poster->getLarge()  : null;
 
   $jacket = $has($item,'getJacketImage') ? $item->getJacketImage() : null;
-  $jSmall  = $jacket && method_exists($jacket,'getSmall')  ? $jacket->getSmall()  : null;
-  $jMedium = $jacket && method_exists($jacket,'getMedium') ? $jacket->getMedium() : (method_exists($jacket,'getMidium') ? $jacket->getMidium() : null);
-  $jLarge  = $jacket && method_exists($jacket,'getLarge')  ? $jacket->getLarge()  : null;
+  $jSmall  = (is_object($jacket) && method_exists($jacket,'getSmall'))  ? $jacket->getSmall()  : null;
+  $jMedium = (is_object($jacket) && (method_exists($jacket,'getMedium') || method_exists($jacket,'getMidium')))
+             ? (method_exists($jacket,'getMedium') ? $jacket->getMedium() : $jacket->getMidium())
+             : null;
+  $jLarge  = (is_object($jacket) && method_exists($jacket,'getLarge'))  ? $jacket->getLarge()  : null;
 
   $thumbs = $has($item,'getThumbnail') ? (array) $item->getThumbnail() : [];
 
   $sample = $has($item,'getSampleMovie') ? $item->getSampleMovie() : null;
-  $sampleMovie   = $sample && method_exists($sample,'getMovie')   ? $sample->getMovie()   : null;
-  $sampleCapture = $sample && method_exists($sample,'getCapture') ? $sample->getCapture() : null;
+  $sampleMovie   = (is_object($sample) && method_exists($sample,'getMovie'))   ? $sample->getMovie()   : null;
+  $sampleCapture = (is_object($sample) && method_exists($sample,'getCapture')) ? $sample->getCapture() : null;
 
   // 関連
   $label = $has($item,'getLabel') ? $item->getLabel() : null;
@@ -46,16 +64,17 @@
   $saleTypes  = $has($item,'getSaleType')  ? (array) $item->getSaleType()  : [];
   $review     = $has($item,'getReview')    ? $item->getReview() : null;
 
-  // レビューの星用
+  // レビューの星用（安全化）
   $rawRating =
-    ($review && method_exists($review,'getRating')) ? $review->getRating()
+    (is_object($review) && method_exists($review,'getRating')) ? $review->getRating()
     : ($has($item,'getRating') ? $item->getRating() : null);
-  $rating = is_numeric($rawRating) ? max(0, min(5, (int)$rawRating)) : null;
-  $reviewer = $review && method_exists($review,'getReviewer') ? $review->getReviewer() : null;
+  $rating = is_numeric($rawRating) ? max(0, min(5, (float)$rawRating)) : null;
+  $reviewer = (is_object($review) && method_exists($review,'getReviewer')) ? $review->getReviewer() : null;
+  $reviewCount = is_numeric($reviewer) ? (int)$reviewer : null;
 
   // ===== SEO 変数 =====
   $siteName  = 'DUGAサンプル動画見放題';
-  $name      = $title ?: '商品詳細';
+  $name      = $title ?: '作品詳細';
   $desc      = trim(mb_strimwidth(preg_replace("/\s+/u", ' ', (string)$caption), 0, 180, '…'));
   if ($desc === '') {
     $desc = $maker ? "{$maker} の作品。サンプル動画・画像、出演者・カテゴリ情報を掲載。" : "サンプル動画・画像、出演者・カテゴリ情報を掲載。";
@@ -67,8 +86,30 @@
   $priceValue = is_numeric($price) ? (float)$price : null;
   $currency   = 'JPY';
 
+  // saleTypes の価格配列を収集（要 is_object）
+  $salePrices = [];
+  $saleOffers = [];
+  foreach ($saleTypes as $s) {
+    if (!is_object($s)) continue;
+    $stype  = method_exists($s,'getType')  ? $s->getType()  : null;
+    $sprice = method_exists($s,'getPrice') ? (int)$s->getPrice() : null;
+    if (is_numeric($sprice)) {
+      $salePrices[] = (int)$sprice;
+      $saleOffers[] = [
+        '@type'         => 'Offer',
+        'name'          => $stype,
+        'price'         => number_format((float)$sprice, 0, '.', ''),
+        'priceCurrency' => $currency,
+        'url'           => $affUrl ?: $canonical,
+        'availability'  => 'https://schema.org/InStock',
+      ];
+    }
+  }
+  $lowPrice  = !empty($salePrices) ? min($salePrices) : null;
+  $highPrice = !empty($salePrices) ? max($salePrices) : null;
+
   // ISO8601
-  $releaseISO = $releaseDate ? \Carbon\Carbon::parse($releaseDate)->toDateString() : null;
+  $releaseISO  = $releaseDate ? \Carbon\Carbon::parse($releaseDate)->toDateString() : null;
   $durationISO = (is_numeric($volume) && (int)$volume > 0) ? ('PT'.(int)$volume.'M') : null;
 
   // カテゴリ名
@@ -78,54 +119,82 @@
   }
 
   // レーベル名
-  $labelName = ($label && method_exists($label,'getName')) ? $label->getName() : null;
+  $labelName = (is_object($label) && method_exists($label,'getName')) ? $label->getName() : null;
 
-  // 出演者/監督
+  // 出演者/監督（JSON-LD用）
   $actorList = [];
   foreach ($performers as $p) {
+    if (!is_object($p)) continue;
     $nm = method_exists($p,'getName') ? $p->getName() : null;
     if ($nm) $actorList[] = ['@type'=>'Person','name'=>$nm];
   }
   $directorList = [];
   foreach ($directors as $d) {
+    if (!is_object($d)) continue;
     $nm = method_exists($d,'getName') ? $d->getName() : null;
     if ($nm) $directorList[] = ['@type'=>'Person','name'=>$nm];
   }
 
-  // Product JSON-LD
-  $productLd = [
-    '@context'      => 'https://schema.org',
-    '@type'         => 'Product',
-    'name'          => $name,
-    'description'   => $desc,
-    'image'         => array_values(array_filter([$posterLarge,$posterMedium,$posterSmall,$jLarge,$jMedium,$jSmall])),
-    'url'           => $canonical,
-    'brand'         => $labelName ? ['@type'=>'Brand','name'=>$labelName] : ($maker ? ['@type'=>'Brand','name'=>$maker] : null),
-    'category'      => !empty($categoryNames) ? implode(', ', $categoryNames) : null,
-    'releaseDate'   => $releaseISO,
-    'productionCompany' => $maker ?: null,
-    'actor'         => !empty($actorList) ? $actorList : null,
-    'director'      => !empty($directorList) ? $directorList : null,
-    'duration'      => $durationISO,
-    'offers'        => $priceValue ? [
+  // offers の決定ロジック
+  $offers = null;
+  if (!is_null($priceValue)) {
+    $offers = [
       '@type'         => 'Offer',
       'price'         => number_format($priceValue, 0, '.', ''),
       'priceCurrency' => $currency,
       'url'           => $affUrl ?: $canonical,
-      'availability'  => 'https://schema.org/InStock'
-    ] : null,
-    'aggregateRating'=> (!is_null($rating)) ? [
+      'availability'  => 'https://schema.org/InStock',
+    ];
+  } elseif (!empty($salePrices)) {
+    $offers = [
+      '@type'         => 'AggregateOffer',
+      'offerCount'    => count($salePrices),
+      'lowPrice'      => number_format((float)$lowPrice, 0, '.', ''),
+      'priceCurrency' => $currency,
+      'highPrice'     => number_format((float)$highPrice, 0, '.', ''),
+      'url'           => $affUrl ?: $canonical,
+      // 'offers'     => $saleOffers, // 必要なら展開
+    ];
+  }
+
+  // aggregateRating
+  $aggregateRating = null;
+  if (!is_null($rating) && !is_null($reviewCount)) {
+    $aggregateRating = [
       '@type'       => 'AggregateRating',
-      'ratingValue' => (string)$rating,
-      'bestRating'  => '5',
-      'worstRating' => '0',
-      'ratingCount' => (is_numeric($reviewer) ? (int)$reviewer : null),
-    ] : null,
-  ];
-  $productLd = array_filter($productLd, fn($v) => !is_null($v));
+      'ratingValue' => $rating,
+      'bestRating'  => 5,
+      'worstRating' => 0,
+      'ratingCount' => $reviewCount,
+    ];
+  }
+
+  // Product JSON-LD は「offers か aggregateRating がある時だけ」
+  $shouldEmitProductLd = !is_null($offers) || !is_null($aggregateRating);
+
+  if ($shouldEmitProductLd) {
+    $productLd = [
+      '@context'      => 'https://schema.org',
+      '@type'         => 'Product',
+      'name'          => $name,
+      'description'   => $desc,
+      'image'         => array_values(array_filter([$posterLarge,$posterMedium,$posterSmall,$jLarge,$jMedium,$jSmall])),
+      'url'           => $canonical,
+      'brand'         => $labelName ? ['@type'=>'Brand','name'=>$labelName] : ($maker ? ['@type'=>'Brand','name'=>$maker] : null),
+      'category'      => !empty($categoryNames) ? implode(', ', $categoryNames) : null,
+      'releaseDate'   => $releaseISO,
+      'productionCompany' => $maker ?: null,
+      'actor'         => !empty($actorList) ? $actorList : null,
+      'director'      => !empty($directorList) ? $directorList : null,
+      'duration'      => $durationISO,
+      'offers'        => $offers,
+      'aggregateRating'=> $aggregateRating,
+    ];
+    $productLd = array_filter($productLd, fn($v) => !is_null($v));
+  }
 
   // パンくず JSON-LD（カテゴリ1つ目があれば中継）
-  $firstCat   = (!empty($categories) && isset($categories[0]) && method_exists($categories[0],'getId')) ? $categories[0] : null;
+  $firstCat   = (!empty($categories) && isset($categories[0]) && is_object($categories[0]) && method_exists($categories[0],'getId')) ? $categories[0] : null;
   $crumbsLd   = [
     [
       '@type'   => 'ListItem',
@@ -154,37 +223,44 @@
     '@type'           => 'BreadcrumbList',
     'itemListElement' => $crumbsLd
   ];
+
+  // SEO タイトル
+  $seoTitle = $title ?: '作品詳細';
+  if (!empty($performers) && isset($performers[0]) && is_object($performers[0]) && method_exists($performers[0],'getName')) {
+    $seoTitle .= '（'.$performers[0]->getName().' 出演）';
+  } elseif (!empty($categories) && isset($categories[0]) && is_object($categories[0]) && method_exists($categories[0],'getName')) {
+    $seoTitle .= '｜'.$categories[0]->getName();
+  }
+  $seoTitle .= ' | 無料サンプル動画あり | DUGAサンプル動画見放題';
 @endphp
 
-@section('title', ($item?->getTitle() ?? '商品詳細').' | DUGAサンプル動画見放題')
+@section('title', $seoTitle)
 
 @section('meta')
-  {{-- 基本メタ --}}
   <meta name="description" content="{{ $desc }}">
   <link rel="canonical" href="{{ $canonical }}">
 
-  {{-- OGP / Twitter --}}
   <meta property="og:site_name" content="{{ $siteName }}">
   <meta property="og:type" content="product">
-  <meta property="og:title" content="{{ $name }} | {{ $siteName }}">
+  <meta property="og:title" content="{{ $seoTitle }}">
   <meta property="og:description" content="{{ $desc }}">
   <meta property="og:url" content="{{ $canonical }}">
   <meta property="og:image" content="{{ $ogImage }}">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{{ $name }} | {{ $siteName }}">
+  <meta name="twitter:title" content="{{ $seoTitle }}">
   <meta name="twitter:description" content="{{ $desc }}">
   <meta name="twitter:image" content="{{ $ogImage }}">
 
-  {{-- 構造化データ --}}
-  <script type="application/ld+json">@json($productLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)</script>
-  <script type="application/ld+json">@json($breadcrumbLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)</script>
+  @if(!empty($shouldEmitProductLd) && $shouldEmitProductLd)
+    <script type="application/ld+json">{!! json_encode($productLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES, 512) !!}</script>
+  @endif
+  <script type="application/ld+json">{!! json_encode($breadcrumbLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES, 512) !!}</script>
 @endsection
 
 @section('content')
-  {{-- パンくず UI --}}
   @php
-    $firstCatForUi = (!empty($categories) && isset($categories[0]) && method_exists($categories[0],'getName')) ? $categories[0] : null;
+    $firstCatForUi = (!empty($categories) && isset($categories[0]) && is_object($categories[0]) && method_exists($categories[0],'getName')) ? $categories[0] : null;
     $crumbs = [
       ['label' => 'トップ', 'url' => route('home')],
     ];
@@ -194,17 +270,21 @@
         'url'   => route('browse.filter',['type'=>'category','id'=>$firstCatForUi->getId()]),
       ];
     }
-    $crumbs[] = ['label' => $title ?: '商品詳細'];
+    $crumbs[] = ['label' => $title ?: '作品詳細'];
   @endphp
   @include('partials.breadcrumbs', ['crumbs' => $crumbs])
 
   <div class="mb-4 flex items-center justify-between">
-    <h1 class="text-xl font-semibold">商品詳細</h1>
+    <p class="mt-3 mb-3 text-xs text-gray-500">※ 当サイトのリンクの一部は広告（アフィリエイトリンク）です。</p>
+  </div>
+
+  <div class="mb-4 flex items-center justify-between">
+    <h1 class="text-xl font-semibold">作品詳細</h1>
     <a href="{{ url()->previous() }}" class="text-sm text-indigo-600 hover:underline">← 一覧に戻る</a>
   </div>
 
   <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-    {{-- 左：メイン画像＆サンプル --}}
+    {{-- 左カラム --}}
     <div class="space-y-4">
       <div class="bg-white rounded-lg shadow overflow-hidden">
         <div class="aspect-[12/7] bg-gray-100">
@@ -249,31 +329,32 @@
         </div>
       @endif
 
-      {{-- サンプル画像（ライトボックス/URL変換） --}}
       @if(!empty($thumbs))
         <div class="bg-white rounded-lg shadow p-3">
           <h2 class="text-sm font-semibold mb-2">サンプル画像</h2>
           <div id="thumbGrid" class="grid grid-cols-3 sm:grid-cols-4 gap-2">
             @foreach($thumbs as $idx => $t)
-              @php $fullUrl = str_replace('/noauth/scap/', '/cap/', $t); @endphp
-              <button type="button"
-                class="group block rounded overflow-hidden bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                data-index="{{ $idx }}"
-                data-src="{{ $fullUrl }}"
-                aria-label="サンプル画像を拡大表示">
-                <img src="{{ $t }}"
-                  alt="{{ $title }} のサンプル画像 {{ $idx + 1 }}"
-                  width="480" height="270"
-                  loading="lazy" decoding="async"
-                  class="w-full aspect-video object-cover transition-transform duration-200 group-hover:scale-[1.02]">
-              </button>
+              @php $fullUrl = is_string($t) ? str_replace('/noauth/scap/', '/cap/', $t) : ''; @endphp
+              @if($fullUrl)
+                <button type="button"
+                  class="group block rounded overflow-hidden bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  data-index="{{ $idx }}"
+                  data-src="{{ $fullUrl }}"
+                  aria-label="サンプル画像を拡大表示">
+                  <img src="{{ $t }}"
+                    alt="{{ $title }} のサンプル画像 {{ $idx + 1 }}"
+                    width="480" height="270"
+                    loading="lazy" decoding="async"
+                    class="w-full aspect-video object-cover transition-transform duration-200 group-hover:scale-[1.02]">
+                </button>
+              @endif
             @endforeach
           </div>
         </div>
       @endif
     </div>
 
-    {{-- 右：テキスト情報 --}}
+    {{-- 右カラム --}}
     <div class="md:col-span-2 space-y-6">
       <div class="bg-white rounded-lg shadow p-4">
         <h1 class="text-2xl font-bold">{{ $title }}</h1>
@@ -282,34 +363,31 @@
         @endif
 
         <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
-          @if($releaseDate)<div><span class="text-gray-500">発売日：</span>{{ $releaseDate }}</div>@endif
-          @if($openDate)   <div><span class="text-gray-500">公開日：</span>{{ $openDate }}</div>@endif
-          @if($itemNo)     <div><span class="text-gray-500">品番：</span>{{ $itemNo }}</div>@endif
-          @if($maker)      <div><span class="text-gray-500">メーカー：</span>{{ $maker }}</div>@endif
-          @if(!is_null($price)) <div><span class="text-gray-500">価格：</span>¥{{ number_format((int)$price) }}</div>@endif
-          @if($volume)     <div><span class="text-gray-500">収録：</span>{{ $volume }}分</div>@endif
-          @if($rankingTotal !== null)<div><span class="text-gray-500">ランキング：</span>{{ $rankingTotal }}位</div>@endif
-          @if($mylistTotal !== null) <div><span class="text-gray-500">マイリスト：</span>{{ $mylistTotal }}件</div>@endif
+          @if($releaseDate) <div><span class="text-gray-500">発売日：</span>{{ $releaseDate }}</div>@endif
+          @if($openDate)    <div><span class="text-gray-500">公開日：</span>{{ $openDate }}</div>@endif
+          @if($itemNo)      <div><span class="text-gray-500">品番：</span>{{ $itemNo }}</div>@endif
+          @if($maker)       <div><span class="text-gray-500">メーカー：</span>{{ $maker }}</div>@endif
+          @if(!is_null($price)) <div><span class="text-gray-500">価格：</span>¥{{ $price }}</div>@endif
+          @if($volume)      <div><span class="text-gray-500">収録：</span>{{ $volume }}分</div>@endif
+          @if($rankingTotal !== null) <div><span class="text-gray-500">ランキング：</span>{{ $rankingTotal }}位</div>@endif
+          @if($mylistTotal  !== null) <div><span class="text-gray-500">マイリスト：</span>{{ $mylistTotal }}件</div>@endif
         </div>
 
         @if($caption)
           <div class="mt-4 whitespace-pre-line leading-relaxed">{{ $caption }}</div>
         @endif
 
-        <div class="mt-4 flex flex-wrap gap-3 text-lg">
+        <div class="mt-6 flex justify-center">
           @if($affUrl)
-            <a href="{{ $affUrl }}" target="_blank" rel="noopener sponsored"
-               class="inline-flex items-center gap-2 px-4 py-2 rounded-lg
-                      bg-gradient-to-r from-indigo-500 to-indigo-600
-                      text-white font-semibold shadow-md
-                      transform transition duration-200
-                      hover:from-indigo-600 hover:to-indigo-700 hover:scale-[1.03] hover:shadow-lg
-                      focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2">
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                      d="M13 7h6m0 0v6m0-6L10 16m-6 5h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              <span>公式ページで詳細を見る</span>
+            <a href="{{ $affUrl }}"
+              target="_blank"
+              rel="sponsored nofollow noopener"
+              class="relative block w-full md:w-auto px-8 py-4 text-center text-lg font-extrabold
+                      text-white rounded-2xl shadow-xl bg-gradient-to-r from-rose-500 via-pink-500 to-red-600
+                      transition-all duration-300 ease-out hover:scale-110 hover:shadow-2xl hover:brightness-110
+                      animate-[pulse_2s_infinite]">
+              🎬 <span class="ml-1">今すぐ公式サイトで見る</span>
+              <span class="absolute inset-0 rounded-2xl bg-white/10 opacity-0 hover:opacity-20 transition"></span>
             </a>
           @endif
         </div>
@@ -319,7 +397,7 @@
         <div class="bg-white rounded-lg shadow p-4 space-y-3">
           <h2 class="text-lg font-semibold">作品情報</h2>
 
-          @if($label)
+          @if(is_object($label))
             @php
               $labelId = method_exists($label,'getId') ? $label->getId() : null;
               $labelName = method_exists($label,'getName') ? $label->getName() : null;
@@ -336,7 +414,7 @@
             </div>
           @endif
 
-          @if($series)
+          @if(is_object($series))
             @php
               $seriesId = method_exists($series,'getId') ? $series->getId() : null;
               $seriesName = method_exists($series,'getName') ? $series->getName() : null;
@@ -359,13 +437,15 @@
               <div class="flex flex-wrap gap-2">
                 @foreach($categories as $c)
                   @php
-                    $cid = method_exists($c,'getId') ? $c->getId() : null;
-                    $cname = method_exists($c,'getName') ? $c->getName() : null;
+                    $cid = (is_object($c) && method_exists($c,'getId')) ? $c->getId() : null;
+                    $cname = (is_object($c) && method_exists($c,'getName')) ? $c->getName() : null;
                   @endphp
-                  <a href="{{ $cid ? route('browse.filter', ['type'=>'category','id'=>$cid]) : '#' }}"
-                     class="inline-flex items-center text-base bg-gray-100 hover:bg-gray-200 rounded-full px-2 py-1">
-                    {{ $cname }}
-                  </a>
+                  @if($cname)
+                    <a href="{{ $cid ? route('browse.filter', ['type'=>'category','id'=>$cid]) : '#' }}"
+                       class="inline-flex items-center text-base bg-gray-100 hover:bg-gray-200 rounded-full px-2 py-1">
+                      {{ $cname }}
+                    </a>
+                  @endif
                 @endforeach
               </div>
             </div>
@@ -381,22 +461,25 @@
               <ul class="divide-y">
                 @foreach($performers as $p)
                   @php
+                    if (!is_object($p)) { continue; }
                     $pid = method_exists($p,'getId') ? $p->getId() : null;
                     $pname = method_exists($p,'getName') ? $p->getName() : null;
                     $pkana = method_exists($p,'getKana') ? $p->getKana() : null;
                   @endphp
-                  <li class="py-2 text-sm flex items-center justify-between gap-2">
-                    <div>
-                      <div class="font-medium">{{ $pname }}</div>
-                      @if($pkana)<div class="text-gray-500">{{ $pkana }}</div>@endif
-                    </div>
-                    @if($pid)
-                      <a href="{{ route('browse.filter', ['type'=>'performer','id'=>$pid]) }}"
-                         class="shrink-0 inline-flex items-center px-2 py-1 rounded text-xs bg-indigo-600 text-white hover:bg-indigo-700">
-                        この出演者で絞り込み
-                      </a>
-                    @endif
-                  </li>
+                  @if($pname)
+                    <li class="py-2 text-sm flex items-center justify-between gap-2">
+                      <div>
+                        <div class="font-medium">{{ $pname }}</div>
+                        @if($pkana)<div class="text-gray-500">{{ $pkana }}</div>@endif
+                      </div>
+                      @if($pid)
+                        <a href="{{ route('browse.filter', ['type'=>'performer','id'=>$pid]) }}"
+                           class="shrink-0 inline-flex items-center px-2 py-1 rounded text-xs bg-indigo-600 text-white hover:bg-indigo-700">
+                          この出演者で絞り込み
+                        </a>
+                      @endif
+                    </li>
+                  @endif
                 @endforeach
               </ul>
             </div>
@@ -408,13 +491,16 @@
               <ul class="divide-y">
                 @foreach($directors as $d)
                   @php
+                    if (!is_object($d)) { continue; }
                     $did = method_exists($d,'getId') ? $d->getId() : null;
                     $dname = method_exists($d,'getName') ? $d->getName() : null;
                   @endphp
-                  <li class="py-2 text-sm">
-                    <div class="font-medium">{{ $dname }}</div>
-                    @if($did)<div class="text-gray-400">#{{ $did }}</div>@endif
-                  </li>
+                  @if($dname)
+                    <li class="py-2 text-sm">
+                      <div class="font-medium">{{ $dname }}</div>
+                      @if($did)<div class="text-gray-400">#{{ $did }}</div>@endif
+                    </li>
+                  @endif
                 @endforeach
               </ul>
             </div>
@@ -436,6 +522,7 @@
               <tbody class="divide-y">
                 @foreach($saleTypes as $s)
                   @php
+                    if (!is_object($s)) { continue; }
                     $stype = method_exists($s,'getType') ? $s->getType() : '';
                     $sprice = method_exists($s,'getPrice') ? (int)$s->getPrice() : null;
                   @endphp
@@ -450,31 +537,29 @@
         </div>
       @endif
 
-      @if($review)
+      @if(is_object($review) || (!is_null($rating)))
         <div class="bg-white rounded-lg shadow p-4">
           <h2 class="text-lg font-semibold mb-1">レビュー</h2>
-          <div class="text-sm">
-            @if(!is_null($rating))
-              <div class="mt-3 flex items-center gap-2">
-                <div class="flex">
-                  @for ($i = 1; $i <= 5; $i++)
-                    @php $filled = $i <= $rating; @endphp
-                    <svg viewBox="0 0 20 20" class="w-5 h-5 {{ $filled ? 'fill-yellow-400 text-yellow-400' : 'fill-gray-300 text-gray-300' }}">
-                      <path d="M10 15.27l-5.18 3.05 1.4-5.98L1.64 8.63l6.05-.52L10 2.5l2.31 5.61 6.05.52-4.58 3.71 1.4 5.98L10 15.27z"/>
-                    </svg>
-                  @endfor
-                </div>
-                <span class="text-sm text-gray-600">{{ $rating }} / 5</span>
-                @if($reviewer) <span class="ml-3 text-gray-500">評価数: {{ $reviewer }}件</span>@endif
+          @if(!is_null($rating))
+            <div class="mt-3 flex items-center gap-2">
+              <div class="flex">
+                @for($i = 1; $i <= 5; $i++)
+                  @php $filled = $i <= $rating; @endphp
+                  <svg viewBox="0 0 20 20" class="w-5 h-5 {{ $filled ? 'fill-yellow-400 text-yellow-400' : 'fill-gray-300 text-gray-300' }}">
+                    <path d="M10 15.27l-5.18 3.05 1.4-5.98L1.64 8.63l6.05-.52L10 2.5l2.31 5.61 6.05.52-4.58 3.71 1.4 5.98L10 15.27z"/>
+                  </svg>
+                @endfor
               </div>
-            @endif
-          </div>
+              <span class="text-sm text-gray-600">{{ $rating }} / 5</span>
+              @if($reviewCount !== null) <span class="ml-3 text-gray-500">評価数: {{ $reviewCount }}件</span>@endif
+            </div>
+          @endif
         </div>
       @endif
     </div>
   </div>
 
-  {{-- ライトボックス: モーダル本体 --}}
+  {{-- 画像ビューア --}}
   <div id="lightbox"
        class="fixed inset-0 z-50 hidden items-center justify-center bg-black/80 p-4"
        aria-hidden="true" role="dialog" aria-modal="true">
@@ -499,18 +584,19 @@
   </div>
 
   {{-- 関連作品 --}}
-  @if(!empty($related))
+  @if(!empty($related ?? []))
     <div class="mt-8 bg-white rounded-lg shadow p-4">
       <h2 class="text-lg font-semibold mb-3">関連作品</h2>
       <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
         @foreach($related as $it)
           @php
+            if (!is_object($it)) { continue; }
             $pid    = method_exists($it,'getProductid') ? $it->getProductid() : null;
             $ttl    = method_exists($it,'getTitle') ? $it->getTitle() : '';
             $rank   = method_exists($it,'getRanking') ? (int)$it->getRanking() : null;
 
             $posterUrl = null;
-            if (method_exists($it,'getPosterImage') && ($pi=$it->getPosterImage())) {
+            if (method_exists($it,'getPosterImage') && ($pi = $it->getPosterImage()) && is_object($pi)) {
               if (method_exists($pi,'getSmall'))  $posterUrl = $posterUrl ?: $pi->getSmall();
               if (method_exists($pi,'getMedium')) $posterUrl = $posterUrl ?: $pi->getMedium();
               if (method_exists($pi,'getMidium')) $posterUrl = $posterUrl ?: $pi->getMidium();
@@ -536,7 +622,7 @@
               @endif
 
               <div class="aspect-[12/7] bg-gray-100">
-                @if ($posterUrl)
+                @if($posterUrl)
                   <img
                     src="{{ $posterUrl }}"
                     alt="{{ $ttl }} のサムネイル"
@@ -557,7 +643,7 @@
     </div>
   @endif
 
-  {{-- ライトボックス用スクリプト --}}
+  {{-- ライトボックス JS --}}
   <script>
     (function () {
       const grid     = document.getElementById('thumbGrid');
@@ -574,9 +660,10 @@
 
       let current = 0;
       const total = buttons.length;
-      const sources = buttons.map(b => b.getAttribute('data-src'));
+      const sources = buttons.map(b => b.getAttribute('data-src')).filter(Boolean);
 
       function openModal(index) {
+        if (!sources.length) return;
         current = (index + total) % total;
         loadImage(current);
         modal.classList.remove('hidden');
@@ -611,10 +698,10 @@
         });
       });
 
-      nextBtn.addEventListener('click', next);
-      prevBtn.addEventListener('click', prev);
-      closeBtn.addEventListener('click', closeModal);
-      backdrop.addEventListener('click', closeModal);
+      nextBtn?.addEventListener('click', next);
+      prevBtn?.addEventListener('click', prev);
+      closeBtn?.addEventListener('click', closeModal);
+      backdrop?.addEventListener('click', closeModal);
 
       document.addEventListener('keydown', (e) => {
         if (modal.classList.contains('hidden')) return;

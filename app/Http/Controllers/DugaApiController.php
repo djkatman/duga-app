@@ -7,150 +7,283 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use App\Utils\ConvertObject;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Str;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use App\Services\DugaIngestService;
+use App\Models\DugaProduct;
+use App\ViewModels\DugaProductView;
+use Throwable;
 
 class DugaApiController extends Controller
 {
 
-public function index(Request $request)
-{
-    $page     = max(1, (int) $request->integer('page', 1));
-    $perPage  = max(1, min(100, (int) $request->integer('per_page', 60)));
-    $sort     = $request->input('sort', 'favorite');
-    $offset   = ($page - 1) * $perPage + 1;
+    public function __construct(private DugaIngestService $ingest) {}
 
-    // nocache=1 で一時的にキャッシュ無効化可能
-    $noCache  = (bool) $request->boolean('nocache', false);
+    public function index(Request $request)
+    {
+        $page     = max(1, (int) $request->integer('page', 1));
+        $perPage  = max(1, min(100, (int) $request->integer('per_page', 60)));
+        $sort     = $request->input('sort', 'favorite');
+        $offset   = ($page - 1) * $perPage + 1;
 
-    $cacheKey = sprintf("duga:index:v1:sort:%s:page:%d:per:%d", $sort, $page, $perPage);
+        // nocache=1 で一時的にキャッシュ無効化可能
+        $noCache  = (bool) $request->boolean('nocache', false);
 
-    $data = $noCache
-        ? null
-        : Cache::get($cacheKey);
+        $cacheKey = sprintf("duga:index:v2:sort:%s:page:%d:per:%d", $sort, $page, $perPage);
 
-    // if (!$data) {
-        $endpoint = 'http://affapi.duga.jp/search';
-        $resp = Http::timeout(10)->retry(2, 200)->get($endpoint, [
-            'appid'    => env('APEX_APP_ID'),
-            'agentid'  => env('APEX_AGENT_ID'),
-            'version'  => env('APEX_API_VERSION', '1.2'),
-            'format'   => env('APEX_FORMAT', 'json'),
-            'adult'    => env('APEX_ADULT', 1),
-            'bannerid' => env('APEX_BANNER_ID'),
-            'sort'     => $sort,
-            'hits'     => $perPage,
-            'offset'   => $offset,
-        ]);
+        $data = $noCache ? null : Cache::get($cacheKey);
 
-        if ($resp->failed()) {
-            abort(500, 'Failed to fetch data from DUGA API');
+        if (!$data) {
+            $endpoint = 'https://affapi.duga.jp/search';
+            $resp = Http::timeout(12)->retry(2, 200)->get($endpoint, [
+                'appid'    => config('duga.app_id'),
+                'agentid'  => config('duga.agent_id'),
+                'version'  => config('duga.version'),
+                'format'   => config('duga.format'),
+                'adult'    => config('duga.adult'),
+                'bannerid' => config('duga.banner_id'),
+                'sort'     => $sort,
+                'hits'     => $perPage,
+                'offset'   => $offset,
+            ]);
+
+            if ($resp->failed() || ($err = data_get($resp->json(), 'error.reason'))) {
+                Log::warning('duga:index api error', [
+                    'status' => $resp->status(),
+                    'reason' => $err,
+                    'body'   => Str::limit($resp->body(), 500)
+                ]);
+                            // 失敗時は空一覧で返す（500落ち回避）
+                $empty = new \Illuminate\Pagination\LengthAwarePaginator([], 0, $perPage, $page, [
+                    'path'  => route('home'),
+                    'query' => $request->query(),
+                ]);
+                return view('index', ['items' => $empty, 'sort' => $sort]);
+            }
+
+            $json = $resp->json();
+            if (!is_array($json)) {
+                \Log::warning('duga:index invalid json');
+                $empty = new \Illuminate\Pagination\LengthAwarePaginator([], 0, $perPage, $page, [
+                    'path'  => route('home'),
+                    'query' => $request->query(),
+                ]);
+                return view('index', ['items' => $empty, 'sort' => $sort]);
+            }
+
+            // API側の論理エラー（認証エラー等）
+            if (isset($json['error'])) {
+                \Log::warning('duga:index api error', ['error' => $json['error']]);
+                $empty = new \Illuminate\Pagination\LengthAwarePaginator([], 0, $perPage, $page, [
+                    'path'  => route('home'),
+                    'query' => $request->query(),
+                ]);
+                abort(502, 'DUGA API error: '.($json['error']['reason'] ?? 'unknown'));
+            }
+
+            // 取得直後の形を軽く記録（必要に応じて log level 調整）
+            \Log::debug('duga:index raw keys', ['keys' => array_keys($json)]);
+
+            // 30分キャッシュ
+            Cache::put($cacheKey, $json, now()->addMinutes(30));
+            $data = $json;
         }
 
-        $json = $resp->json();
+        // 正規化
+        $itemsRaw = $this->extractItems($data);
+        $total    = $this->extractTotal($data);
 
-        if (!is_array($json)) {
-            abort(500, 'Invalid JSON response from DUGA API');
+        if (empty($itemsRaw)) {
+            \Log::warning('duga:index items empty', [
+                'sort'   => $sort,
+                'page'   => $page,
+                'per'    => $perPage,
+                'keys'   => array_keys($data),
+                'sample' => array_slice($data, 0, 3, true),
+            ]);
         }
 
-        // 取得直後の形を軽く記録（本番では log level 調整可）
-        Log::debug('duga:index raw keys', ['keys' => array_keys($json)]);
+        $objects = \App\Utils\ConvertObject::arrayToObject($itemsRaw);
 
-        // 30分キャッシュ
-        Cache::put($cacheKey, $json, now()->addMinutes(30));
-        $data = $json;
-    // }
+        $paginator = new \Illuminate\Pagination\LengthAwarePaginator(
+            $objects,
+            $total ?: ($page * $perPage),
+            $perPage,
+            $page,
+            [
+                'path'  => route('home'),
+                'query' => $request->query(),
+            ]
+        );
 
-    // ★ 正規化してからオブジェクト化
-    $itemsRaw = $this->extractItems($data);
-    $total    = $this->extractTotal($data);
-
-    // デバッグ用：空のときは keys をログに出す
-    if (empty($itemsRaw)) {
-        Log::warning('duga:index items empty', [
-            'sort'   => $sort,
-            'page'   => $page,
-            'per'    => $perPage,
-            'keys'   => array_keys($data),
-            'sample' => array_slice($data, 0, 3, true),
+        return view('index', [
+            'items' => $paginator,
+            'sort'  => $sort,
         ]);
     }
 
-    $objects = ConvertObject::arrayToObject($itemsRaw);
+    // public function show(string $id, Request $request)
+    // {
 
-    $paginator = new LengthAwarePaginator(
-        $objects,
-        $total ?: ($page * $perPage),
-        $perPage,
-        $page,
-        [
-            'path'  => route('home'),
-            'query' => $request->query(),
-        ]
-    );
+    //     // キャッシュキーを商品ID単位で作成
+    //     $cacheKey = "duga:detail:{$id}";
 
-    return view('index', [
-        'items' => $paginator,
-        'sort'  => $sort,
-    ]);
-}
+    //     // 24時間キャッシュ
+    //     $item = Cache::remember($cacheKey, now()->addDay(), function () use ($id) {
+    //         $endpoint = 'https://affapi.duga.jp/search';
 
-    public function show(string $id, Request $request)
+    //         $resp = Http::timeout(10)->retry(2, 200)->get($endpoint, [
+    //             'appid'    => config('duga.app_id'),
+    //             'agentid'  => config('duga.agent_id'),
+    //             'version'  => config('duga.version'),
+    //             'format'   => config('duga.format'),
+    //             'adult'    => config('duga.adult'),
+    //             'bannerid' => config('duga.banner_id'),
+    //             // productid を指定して1件だけ返す
+    //             'keyword'   => $id,
+    //             'hits'      => 1,
+    //             'offset'    => 1,
+    //         ]);
+
+    //         if ($resp->failed()) {
+    //             abort(502, 'Failed to fetch data from DUGA API');
+    //         }
+
+    //         $data = $resp->json();
+    //         if (!is_array($data)) {
+    //             abort(502, 'Invalid JSON response from DUGA API');
+    //         }
+
+    //         $itemsRaw = $this->extractItems($data);
+    //         // 2重配列のケースに対応
+    //         if (!empty($itemsRaw) && is_array($itemsRaw) && isset($itemsRaw[0]) && is_array($itemsRaw[0]) && Arr::isAssoc($itemsRaw[0]) === false) {
+    //             $itemsRaw = $itemsRaw[0];
+    //         }
+
+    //         $first = is_array($itemsRaw) ? (reset($itemsRaw) ?: null) : null;
+    //         if (!$first) {
+    //             abort(404, 'Item not found');
+    //         }
+
+    //         $objects = ConvertObject::arrayToObject([$first]);
+    //         return $objects[0] ?? null;
+    //     });
+
+    //     if (!$item) {
+    //         abort(404, 'Item not found');
+    //     }
+
+    //     $related = $this->fetchRelatedItems($item, limit: 12);
+
+    //     return view('products.show', [
+    //         'item'    => $item,
+    //         'related' => $related,
+    //     ]);
+    // }
+
+    public function show(string $id)
     {
-        // キャッシュキーを商品ID単位で作成
-        $cacheKey = "duga:detail:{$id}";
+        // $cacheKey = "duga:product:{$id}";
+        // 旧キャッシュと衝突しないようにキーを更新（v2 など）
+        $cacheKey = "duga:vm:v2:{$id}";
 
-        // 24時間キャッシュ
-        $item = Cache::remember($cacheKey, now()->addDay(), function () use ($id) {
-            $endpoint = 'https://affapi.duga.jp/search';
-
-            $resp = Http::timeout(10)->retry(2, 200)->get($endpoint, [
-                'appid'     => env('APEX_APP_ID'),
-                'agentid'   => env('APEX_AGENT_ID'),
-                'version'   => env('APEX_API_VERSION', '1.0'),
-                'format'    => env('APEX_FORMAT', 'json'),
-                'adult'     => env('APEX_ADULT', 1),
-                'bannerid'  => env('APEX_BANNER_ID'),
-                // productid を指定して1件だけ返す
-                'keyword'   => $id,
-                'hits'      => 1,
-                'offset'    => 1,
-            ]);
-
-            if ($resp->failed()) {
-                abort(502, 'Failed to fetch data from DUGA API');
+        // 1) まずキャッシュを素直に読む（あれば即返す）
+        if ($vm = Cache::get($cacheKey)) {
+            // 念のため：キャッシュはあるが DB が空の“過去遺産”を自動補修
+            if (!$this->existsInDb($id)) {
+                // 同期で DB に埋める（確実に登録させたい場合は同期のままが安全）
+                $this->ingest->fetchAndUpsertByProductId($id);
             }
-
-            $data = $resp->json();
-            if (!is_array($data)) {
-                abort(502, 'Invalid JSON response from DUGA API');
-            }
-
-            $itemsRaw = $this->extractItems($data);
-            // 2重配列のケースに対応
-            if (!empty($itemsRaw) && is_array($itemsRaw) && isset($itemsRaw[0]) && is_array($itemsRaw[0]) && Arr::isAssoc($itemsRaw[0]) === false) {
-                $itemsRaw = $itemsRaw[0];
-            }
-
-            $first = is_array($itemsRaw) ? (reset($itemsRaw) ?: null) : null;
-            if (!$first) {
-                abort(404, 'Item not found');
-            }
-
-            $objects = ConvertObject::arrayToObject([$first]);
-            return $objects[0] ?? null;
-        });
-
-        if (!$item) {
-            abort(404, 'Item not found');
+            $related = $this->fetchRelatedItems($vm, limit: 12);
+            return view('products.show', ['item' => $vm, 'related' => $related]);
         }
 
-        $related = $this->fetchRelatedItems($item, limit: 12);
+        // 2) DB に無ければ API → DB upsert → 再取得
+        $product = $this->findProduct($id);
+        if (!$product) {
+            $this->ingest->fetchAndUpsertByProductId($id);   // ★ここで必ず DB に登録
+            $product = $this->findProduct($id);
+            if (!$product) {
+                abort(404, '商品が見つかりません。');
+            }
+        }
 
-        return view('products.show', [
-            'item'    => $item,
-            'related' => $related,
+        // 3) Eloquent -> ViewModel に変換
+        $vm = $this->toViewModel($product);
+
+        // 4) 完成した ViewModel を 24h キャッシュ
+        Cache::put($cacheKey, $vm, now()->addDay());
+
+        // 5) 画面へ
+        $related = $this->fetchRelatedItems($vm, limit: 12);
+        return view('products.show', ['item' => $vm, 'related' => $related]);
+    }
+
+    /** 関連をまとめてロードして1件取得 */
+    private function findProduct(string $productId): ?DugaProduct
+    {
+        return DugaProduct::with([
+            'label','series','categories','performers','directors',
+            'samples','thumbnails','saleTypes'
+        ])->where('productid', $productId)->first();
+    }
+
+    /** DB に存在するかだけ軽く見る */
+    private function existsInDb(string $productId): bool
+    {
+        return \App\Models\DugaProduct::where('productid', $productId)->exists();
+    }
+
+    /** Eloquent -> View 用のプレゼンター（API 互換メソッドを持つ ViewModel）へ */
+    private function toViewModel(DugaProduct $p): DugaProductView
+    {
+        $firstSample = $p->samples->first();
+
+        return new DugaProductView([
+            'id'             => $p->id,
+            'productid'      => $p->productid,
+            'title'          => $p->title,
+            'original_title' => $p->original_title,
+            'caption'        => $p->caption,
+            'maker'          => $p->maker,
+            'url'            => $p->url,
+            'affiliate_url'  => $p->affiliate_url,
+            'open_date'      => $p->open_date,
+            'release_date'   => $p->release_date,
+            'item_no'        => $p->item_no,
+            'price'          => $p->price,
+            'volume'         => $p->volume,
+            'ranking_total'  => $p->ranking_total,
+            'mylist_total'   => $p->mylist_total,
+            'review_rating'  => $p->review_rating,
+            'review_count'   => $p->review_count,
+
+            // 画像
+            'poster_small'   => $p->poster_small,
+            'poster_medium'  => $p->poster_medium,
+            'poster_large'   => $p->poster_large,
+            'jacket_small'   => $p->jacket_small,
+            'jacket_medium'  => $p->jacket_medium,
+            'jacket_large'   => $p->jacket_large,
+
+            // サンプル動画
+            'sample' => $firstSample ? [
+                'movie'   => $firstSample->movie_url,
+                'capture' => $firstSample->capture_url,
+            ] : null,
+
+            // サムネイル（小 → 大のURLはBladeで置換して拡大）
+            'thumbs' => $p->thumbnails->pluck('thumb_url')->filter()->values()->all(),
+
+            // 関連
+            'label'      => $p->label  ? ['id'=>$p->label->duga_id,  'name'=>$p->label->name]  : null,
+            'series'     => $p->series ? ['id'=>$p->series->duga_id, 'name'=>$p->series->name] : null,
+            'categories' => $p->categories->map(fn($c)=>['id'=>$c->duga_id,'name'=>$c->name])->all(),
+            'performers' => $p->performers->map(fn($a)=>['id'=>$a->duga_id,'name'=>$a->name,'kana'=>$a->kana])->all(),
+            'directors'  => $p->directors->map(fn($d)=>['id'=>$d->duga_id,'name'=>$d->name])->all(),
+            'sale_types' => $p->saleTypes->map(fn($s)=>['type'=>$s->type,'price'=>$s->price])->all(),
         ]);
     }
 
@@ -186,12 +319,12 @@ public function index(Request $request)
         $data = Cache::remember($cacheKey, now()->addMinutes(30), function () use ($filterKey, $id, $sort, $perPage, $offset) {
             $endpoint = 'https://affapi.duga.jp/search';
             $resp = Http::timeout(10)->retry(2, 200)->get($endpoint, [
-                'appid'     => env('APEX_APP_ID'),
-                'agentid'   => env('APEX_AGENT_ID'),
-                'version'   => env('APEX_API_VERSION', '1.0'),
-                'format'    => env('APEX_FORMAT', 'json'),
-                'adult'     => env('APEX_ADULT', 1),
-                'bannerid'  => env('APEX_BANNER_ID'),
+                'appid'    => config('duga.app_id'),
+                'agentid'  => config('duga.agent_id'),
+                'version'  => config('duga.version'),
+                'format'   => config('duga.format'),
+                'adult'    => config('duga.adult'),
+                'bannerid' => config('duga.banner_id'),
                 'sort'      => $sort,
                 'hits'      => $perPage,
                 'offset'    => $offset,
@@ -370,12 +503,12 @@ public function index(Request $request)
         $data = Cache::remember($cacheKey, now()->addMinutes(30), function () use ($q, $sort, $perPage, $offset) {
             $endpoint = 'https://affapi.duga.jp/search';
             $resp = Http::timeout(10)->retry(2, 200)->get($endpoint, [
-                'appid'     => env('APEX_APP_ID'),
-                'agentid'   => env('APEX_AGENT_ID'),
-                'version'   => env('APEX_API_VERSION', '1.0'),
-                'format'    => env('APEX_FORMAT', 'json'),
-                'adult'     => env('APEX_ADULT', 1),
-                'bannerid'  => env('APEX_BANNER_ID'),
+                'appid'    => config('duga.app_id'),
+                'agentid'  => config('duga.agent_id'),
+                'version'  => config('duga.version'),
+                'format'   => config('duga.format'),
+                'adult'    => config('duga.adult'),
+                'bannerid' => config('duga.banner_id'),
                 'sort'      => $sort,
                 'hits'      => $perPage,
                 'offset'    => $offset,
@@ -390,6 +523,22 @@ public function index(Request $request)
         });
 
         $itemsRaw = $this->extractItems($data);
+
+        if (empty($itemsRaw)) {
+    $maybe = Arr::get($data, 'items', []);
+    if (is_array($maybe)) {
+        // 連想配列の配下を values にして配列に
+        $vals = array_values(array_filter($maybe, 'is_array'));
+        if (!empty($vals)) {
+            // 内側が行配列ならそのまま、そうでなければ更に一階層潜る
+            if (isset($vals[0]) && is_array($vals[0]) && Arr::isAssoc($vals[0])) {
+                $itemsRaw = $vals;
+            } elseif (isset($vals[0][0]) && is_array($vals[0][0]) && Arr::isAssoc($vals[0][0])) {
+                $itemsRaw = $vals[0];
+            }
+        }
+    }
+}
         if (!empty($itemsRaw) && is_array($itemsRaw) && isset($itemsRaw[0]) && is_array($itemsRaw[0]) && !Arr::isAssoc($itemsRaw[0])) {
             $itemsRaw = $itemsRaw[0];
         }
@@ -398,7 +547,7 @@ public function index(Request $request)
         $currentCount = count($objects);
 
         $total    = $this->extractTotal($data);
-
+        
         $effectiveTotal = $total > 0
         ? $total
         : ($currentCount === $perPage
@@ -497,12 +646,12 @@ public function index(Request $request)
         return Cache::remember($key, now()->addMinutes(30), function () use ($extraParams, $hits) {
             $endpoint = 'https://affapi.duga.jp/search';
             $query = array_merge([
-                'appid'     => env('APEX_APP_ID'),
-                'agentid'   => env('APEX_AGENT_ID'),
-                'version'   => env('APEX_API_VERSION', '1.0'),
-                'format'    => env('APEX_FORMAT', 'json'),
-                'adult'     => env('APEX_ADULT', 1),
-                'bannerid'  => env('APEX_BANNER_ID'),
+                'appid'    => config('duga.app_id'),
+                'agentid'  => config('duga.agent_id'),
+                'version'  => config('duga.version'),
+                'format'   => config('duga.format'),
+                'adult'    => config('duga.adult'),
+                'bannerid' => config('duga.banner_id'),
                 'sort'      => 'favorite',
                 'hits'      => $hits,
                 'offset'    => 1,
@@ -523,33 +672,74 @@ public function index(Request $request)
         });
     }
 
-    private function extractItems(array $data): array
-    {
-        // まず items を取得
-        $items = Arr::get($data, 'items', []);
+   private function extractItems(array $data): array
+{
+    // 1) よくあるパターン
+    $items = Arr::get($data, 'items', []);
 
-        // パターン3: items.item
-        if (is_array($items) && isset($items['item']) && is_array($items['item'])) {
+    // items がオブジェクト風（連想）のときのバリエーション
+    if (is_array($items)) {
+        // items.item 直下に配列
+        if (isset($items['item']) && is_array($items['item'])) {
             $items = $items['item'];
         }
-
-        // パターン2: items[0] が配列かつ非連想 → 2重配列の内側を使う
-        if (is_array($items) && !empty($items) && isset($items[0]) && is_array($items[0]) && !Arr::isAssoc($items[0])) {
+        // 連想配列だが1件分（行）っぽい → 包む
+        elseif (Arr::isAssoc($items) && $this->looksLikeRow($items)) {
+            $items = [$items];
+        }
+        // 連想配列だが下に数値キー配列が居る → values() で配列化
+        elseif (Arr::isAssoc($items)) {
+            $vals = array_values($items);
+            if (!empty($vals) && is_array($vals[0])) {
+                $items = $vals;
+            }
+        }
+        // 2重配列（items[0] が配列かつ非連想）→ 内側を使う
+        if (!empty($items) && isset($items[0]) && is_array($items[0]) && !Arr::isAssoc($items[0])) {
             $items = $items[0];
         }
-
-        // すでに行配列なら返す
-        if (is_array($items) && !empty($items) && isset($items[0]) && is_array($items[0]) && Arr::isAssoc($items[0])) {
-            return $items;
-        }
-
-        // まれに root が行配列
-        if (empty($items) && isset($data[0]) && is_array($data[0]) && Arr::isAssoc($data[0])) {
-            return $data;
-        }
-
-        return is_array($items) ? $items : [];
     }
+
+    // 2) items が空なら item 直下を試す
+    if (empty($items)) {
+        $items = Arr::get($data, 'item', []);
+        if (is_array($items) && Arr::isAssoc($items)) {
+            $items = [$items];
+        }
+    }
+
+    // 3) まだ空なら、最初に「行配列（連想配列の配列）」に見える候補を総当たりで拾う
+    if (empty($items)) {
+        foreach ($data as $v) {
+            if (is_array($v)) {
+                // そのまま行配列
+                if (!empty($v) && isset($v[0]) && is_array($v[0]) && Arr::isAssoc($v[0])) {
+                    return $v;
+                }
+                // ネスト下に行配列
+                foreach ($v as $vv) {
+                    if (is_array($vv) && !empty($vv) && isset($vv[0]) && is_array($vv[0]) && Arr::isAssoc($vv[0])) {
+                        return $vv;
+                    }
+                }
+            }
+        }
+    }
+
+    return is_array($items) ? $items : [];
+}
+
+/** 1レコード（行）っぽいかの簡易判定 */
+private function looksLikeRow(array $row): bool
+{
+    // よく現れるフィールド名のいずれかがあれば行っぽいとみなす
+    $keys = array_map('strtolower', array_keys($row));
+    $hints = ['productid','title','originaltitle','price','releasedate','jacketimage','posterimage','url'];
+    foreach ($hints as $h) {
+        if (in_array($h, $keys, true)) return true;
+    }
+    return false;
+}
 
     /** 総件数を多様なキーから拾う */
     private function extractTotal(array $data): int

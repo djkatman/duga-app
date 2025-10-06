@@ -1,11 +1,12 @@
 {{-- resources/views/index.blade.php --}}
 @extends('layouts.app')
-@section('title', 'トップ | DUGAサンプル動画見放題')
 
 {{-- ====== SEO Meta / OGP / JSON-LD ====== --}}
 @php
   // ページ情報
-  $siteName   = 'DUGAサンプル動画見放題';
+  $siteName = 'DUGAサンプル動画見放題';
+  $seoTitle = "【公式】無料サンプル動画あり｜人気アダルト動画・AV作品 | {$siteName}";
+  $seoDesc  = "DUGAの人気アダルト動画を毎日更新。無料サンプル動画・画像あり。出演者・カテゴリ・シリーズから検索可能。";
   $pageTitle  = 'トップ | '.$siteName;
   $sortLabel  = request('sort', 'favorite') === 'new' ? '新着順' : '人気順';
   $pageNum    = (int) request('page', 1);
@@ -58,9 +59,11 @@
   ];
 @endphp
 
+@section('title', $seoTitle)
+
 @section('meta')
   {{-- 基本メタ --}}
-  <meta name="description" content="{{ $desc }}">
+  <meta name="description" content="{{ $seoDesc }}">
 
   {{-- カノニカル & ページネーション --}}
   <link rel="canonical" href="{{ $canonicalUrl }}">
@@ -89,7 +92,7 @@
 @section('content')
   {{-- ヘッダー行（並び替えなど任意） --}}
   <div class="mb-4 flex items-center justify-between">
-    <h1 class="text-xl font-semibold">作品一覧</h1>
+    <h1 class="text-xl font-semibold">無料サンプル動画あり | 人気アダルト動画・AV作品を探す</h1>
     <div class="hidden sm:flex items-center gap-2 text-sm">
       <a href="{{ route('home', array_merge(request()->query(), ['sort' => 'favorite', 'page' => 1])) }}"
          class="px-3 py-1 rounded border hover:bg-gray-50 @if(request('sort','favorite')==='favorite') bg-gray-100 @endif">
@@ -101,6 +104,10 @@
       </a>
     </div>
   </div>
+
+  <p class="text-gray-600 text-sm mb-6">
+  DUGAで配信中の人気アダルト動画を厳選掲載。無料サンプル動画・画像、出演者・カテゴリ情報も充実。
+</p>
 
   @php
   $crumbs = [

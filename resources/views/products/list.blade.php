@@ -66,9 +66,34 @@
     'name'            => $labelText,
     'itemListElement' => $itemList,
   ];
+
+    $base = '';
+
+  switch ($type) {
+    case 'category':
+      $base = $filterName ? "{$filterName}の動画一覧" : "カテゴリ別動画一覧";
+      break;
+    case 'label':
+      $base = $filterName ? "{$filterName}作品の動画一覧" : "レーベル別動画一覧";
+      break;
+    case 'series':
+      $base = $filterName ? "シリーズ「{$filterName}」の動画一覧" : "シリーズ動画一覧";
+      break;
+    case 'performer':
+      $base = $filterName ? "{$filterName} 出演の動画一覧" : "出演者別動画一覧";
+      break;
+    case 'keyword':
+      $base = $filterId ? "「{$filterId}」の検索結果" : "動画検索結果";
+      break;
+    default:
+      $base = "動画一覧";
+  }
+
+  // SEO訴求ワード追加
+  $seoTitle = $base.' | 無料サンプル動画あり | DUGAサンプル動画見放題';
 @endphp
 
-@section('title', $pageTitle)
+@section('title', $seoTitle)
 
 @section('meta')
   <meta name="description" content="{{ $desc }}">
@@ -78,13 +103,13 @@
 
   <meta property="og:site_name" content="{{ $siteName }}">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="{{ $pageTitle }}">
+  <meta property="og:title" content="{{ $seoTitle }}">
   <meta property="og:description" content="{{ $desc }}">
   <meta property="og:url" content="{{ $canonicalUrl }}">
   <meta property="og:image" content="{{ $ogImage }}">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="{{ $pageTitle }}">
+  <meta name="twitter:title" content="{{ $seoTitle }}">
   <meta name="twitter:description" content="{{ $desc }}">
   <meta name="twitter:image" content="{{ $ogImage }}">
 
@@ -104,7 +129,7 @@
   {{-- 見出し（件数入り）＋ 並び替え --}}
   <div class="mb-4 flex items-center justify-between">
     <h1 class="text-xl font-semibold">
-      {{ $labelBase }}
+      {{ $base }}（無料サンプル動画あり）
       ：<span class="text-gray-700 text-base">{{ $term !== '' ? $term : '未指定' }}</span>
       <span class="ml-2 text-sm text-gray-500">（{{ number_format($total) }}件）</span>
     </h1>
