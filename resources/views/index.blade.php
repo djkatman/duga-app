@@ -5,14 +5,14 @@
 @php
   // ページ情報
   $siteName = 'DUGAサンプル動画見放題';
-  $seoTitle = "【公式】無料サンプル動画あり｜人気アダルト動画・AV作品 | {$siteName}";
+  $seoTitle = "DUGAアダルト動画を見るならここ！無料・割引・人気作まとめ【最新版】";
   $seoDesc  = "DUGAの人気アダルト動画を毎日更新。無料サンプル動画・画像あり。出演者・カテゴリ・シリーズから検索可能。";
   $pageTitle  = 'トップ | '.$siteName;
   $sortLabel  = request('sort', 'favorite') === 'new' ? '新着順' : '人気順';
   $pageNum    = (int) request('page', 1);
 
   // ディスクリプション（必要に応じて調整）
-  $desc = "DUGAの人気作品を{$sortLabel}でピックアップ。サンプル動画や画像、出演者情報までチェックできます。";
+  $desc = "DUGAで配信中のアダルト動画をジャンル別に紹介！人気シリーズ・新作・割引作品など、今すぐ見られるおすすめラインナップを完全網羅。視聴前にチェックしておきたい料金・支払い方法もわかりやすく解説します。";
 
   // カノニカル & prev/next（ページネーション）
   $isPaginated  = $items instanceof \Illuminate\Contracts\Pagination\Paginator;

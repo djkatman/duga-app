@@ -22,3 +22,11 @@ Route::get('/sitemap.xml', [SitemapController::class, 'index'])->name('sitemap.i
 // 分割サイトマップ（例：products のページ分割、lists は一覧のソート×ページ）
 Route::get('/sitemap-products-{n}.xml', [SitemapController::class, 'products'])->whereNumber('n')->name('sitemap.products');
 Route::get('/sitemap-lists.xml', [SitemapController::class, 'lists'])->name('sitemap.lists');
+
+// このページについて
+Route::get('/about', function () {
+    return view('about', [
+        'pageTitle' => 'このサイトについて',
+        'pageDesc'  => 'DUGAサンプル動画見放題サイトの概要、ポリシー、問い合わせ先などを掲載します。',
+    ]);
+})->name('about');

@@ -1,4 +1,4 @@
-{{-- resources/views/products/show.blade.php（安全版） --}}
+{{-- resources/views/products/show.blade.php（安全版＋視聴ガイド＆FAQ追加） --}}
 @extends('layouts.app')
 
 @php
@@ -21,8 +21,7 @@
                   : ($has($item,'getAffiliateUrl') ? $item->getAffiliateUrl() : '');
   $openDate     = $has($item,'getOpendate')      ? $item->getOpendate()
                   : ($has($item,'getOpenDate') ? $item->getOpenDate() : '');
-  $releaseDate  = $has($item,'getReleasedate')   ? $item->getReleasedate()
-                  : ($has($item,'getReleaseDate') ? $item->getReleaseDate() : '');
+  $releaseDate  = $has($item,'getReleasedate')   ? $item->getReleasedate()   : ($has($item,'getReleaseDate') ? $item->getReleaseDate() : '');
   $itemNo       = $has($item,'getItemno')        ? $item->getItemno()
                   : ($has($item,'getItemNo') ? $item->getItemNo() : '');
   $price        = $has($item,'getPrice')         ? $item->getPrice()         : null;
@@ -256,6 +255,35 @@
     <script type="application/ld+json">{!! json_encode($productLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES, 512) !!}</script>
   @endif
   <script type="application/ld+json">{!! json_encode($breadcrumbLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES, 512) !!}</script>
+
+  {{-- ▼ 追加：FAQPage JSON-LD（視聴ガイドのQ&A） --}}
+  @php
+    $faqPairs = [
+      [
+        'q' => 'DUGAの作品はどの端末で視聴できますか？',
+        'a' => 'パソコン・スマホ・タブレットに対応し、ブラウザからストリーミング再生できます。購入済み作品はマイページの「購入履歴」からいつでも再生できます。'
+      ],
+      [
+        'q' => '無料サンプルはありますか？',
+        'a' => 'ほとんどの作品で無料サンプル動画が用意されています。画質や内容を確認してから購入や見放題プランをご検討ください。'
+      ],
+    ];
+    $faqLd = [
+      '@context' => 'https://schema.org',
+      '@type'    => 'FAQPage',
+      'mainEntity' => array_map(function ($qa) {
+        return [
+          '@type'          => 'Question',
+          'name'           => $qa['q'],
+          'acceptedAnswer' => [
+            '@type' => 'Answer',
+            'text'  => $qa['a'],
+          ],
+        ];
+      }, $faqPairs),
+    ];
+  @endphp
+  <script type="application/ld+json">{!! json_encode($faqLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES, 512) !!}</script>
 @endsection
 
 @section('content')
@@ -382,7 +410,7 @@
             <a href="{{ $affUrl }}"
               target="_blank"
               rel="sponsored nofollow noopener"
-              class="relative block w-full md:w-auto px-8 py-4 text-center text-lg font-extrabold
+              class="relative block w/full md:w-auto px-8 py-4 text-center text-lg font-extrabold
                       text-white rounded-2xl shadow-xl bg-gradient-to-r from-rose-500 via-pink-500 to-red-600
                       transition-all duration-300 ease-out hover:scale-110 hover:shadow-2xl hover:brightness-110
                       animate-[pulse_2s_infinite]">
@@ -392,6 +420,71 @@
           @endif
         </div>
       </div>
+
+      {{-- ▼ 追加：視聴ガイド --}}
+      <section class="bg-white rounded-lg shadow p-4 space-y-4">
+        <h2 class="text-lg font-semibold">DUGAアダルト動画の視聴ガイド【初めての方向け】</h2>
+
+        <div class="space-y-3 text-sm leading-relaxed">
+          <div>
+            <h3 class="font-semibold text-gray-800">1. 作品を探す</h3>
+            <p class="text-gray-700">
+              検索バーに「女優名」「ジャンル」「シリーズ名」を入力し、表示された作品を
+              <span class="font-medium">人気順・新着順</span>で並び替えると話題作を効率よく見つけられます。
+            </p>
+          </div>
+
+          <div>
+            <h3 class="font-semibold text-gray-800">2. サンプル動画を見る</h3>
+            <p class="text-gray-700">
+              多くの作品で<span class="font-medium">無料サンプル再生</span>が可能です。画質や出演者、内容を確認し、
+              気になればお気に入りに保存して比較検討しましょう。
+            </p>
+          </div>
+
+          <div>
+            <h3 class="font-semibold text-gray-800">3. 視聴プランを選ぶ</h3>
+            <p class="text-gray-700">
+              短期で1本だけ見たい場合は<span class="font-medium">単品購入</span>、継続的に楽しみたい場合は
+              <span class="font-medium">見放題プラン</span>がおすすめです。支払いはクレジットカードや電子マネー等に対応。
+            </p>
+          </div>
+
+          <div>
+            <h3 class="font-semibold text-gray-800">4. 視聴方法を選ぶ</h3>
+            <p class="text-gray-700">
+              パソコン・スマホ・タブレットのブラウザで<span class="font-medium">ストリーミング再生</span>できます。
+              購入済み作品はマイページの「購入履歴」からいつでも再生可能。高画質モードでは1080p対応の作品もあります。
+            </p>
+          </div>
+
+          <div>
+            <h3 class="font-semibold text-gray-800">5. 見終わったらレビュー投稿を</h3>
+            <p class="text-gray-700">
+              購入者レビューで「満足度」「画質」「見どころ」を共有しましょう。評価は他ユーザーの参考になり、
+              サイト全体の品質向上（E-E-A-T）にもつながります。
+            </p>
+          </div>
+        </div>
+
+        <div class="mt-4">
+          @if($affUrl)
+            <a href="{{ $affUrl }}" target="_blank" rel="sponsored nofollow noopener"
+               class="inline-flex items-center justify-center px-6 py-3 rounded-xl text-white font-bold
+                      bg-gradient-to-r from-indigo-600 to-fuchsia-600 hover:brightness-110 hover:scale-[1.02]
+                      transition-all duration-200">
+              🎬 今すぐ公式サイトで視聴する
+            </a>
+          @else
+            <a href="{{ $url ?: $canonical }}" target="_blank" rel="nofollow noopener"
+               class="inline-flex items-center justify-center px-6 py-3 rounded-xl text-white font-bold
+                      bg-gradient-to-r from-indigo-600 to-fuchsia-600 hover:brightness-110 hover:scale-[1.02]
+                      transition-all duration-200">
+              🎬 今すぐ作品ページを開く
+            </a>
+          @endif
+        </div>
+      </section>
 
       @if($label || $series || !empty($categories))
         <div class="bg-white rounded-lg shadow p-4 space-y-3">

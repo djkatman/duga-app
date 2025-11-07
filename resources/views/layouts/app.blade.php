@@ -69,6 +69,10 @@
             {{ $label }}
           </a>
         @endforeach
+        <a href="{{ route('about') }}"
+          class="text-sm text-gray-700 hover:text-indigo-600 px-3 py-2">
+          About
+        </a>
       </nav>
 
 
@@ -116,6 +120,10 @@
         @endforeach
       </nav>
     </div>
+    <a href="{{ route('about') }}"
+          class="xs-sm text-gray-700 hover:text-indigo-600 px-3 py-2">
+          About
+        </a>
   </div>
 </header>
 
