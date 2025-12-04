@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
 
 use App\Models\DugaProduct;
 
@@ -18,25 +19,73 @@ class DugaIngestService
     /** グローバル制限キー（全プロセスで共有） */
     private const RL_KEY        = 'duga:api:global';
     /** 1分当たりの許容量（暫定）。必要に応じて .env で調整 */
-    private const RL_PER_MIN    = 60;   // 60req/min = 1req/sec
+    // private const RL_PER_MIN    = 60;   // 60req/min = 1req/sec
+    private function rlPerMin(): int { return (int) config('duga.rate_per_min', 60); }
     private const RL_DECAY      = 60;   // 秒
+    
     /** 同時実行の直列化（秒） */
     private const LOCK_TTL      = 10;
     private const LOCK_KEY      = 'duga:api:lock';
 
+    /** サーキットブレーカー & 429連続ヒット計測 */
+    private const CB_KEY          = 'duga:api:circuit';       // 開いている間はAPI呼ばない
+    private const RL_STREAK_KEY   = 'duga:api:rl:streak';     // 連続ヒット回数
+
     /** リトライ上限/初期待機(ms)/ジッター(ms) */
-    private const RETRY_MAX_ATTEMPTS = 6;
-    private const RETRY_BASE_MS      = 200;
-    private const RETRY_MAX_JITTER   = 200;
+    private const RETRY_MAX_ATTEMPTS = 7;
+    private const RETRY_BASE_MS      = 1000;
+    private const RETRY_MAX_JITTER   = 800;
+
+    private const BACKOFF_CAP_MS     = 60000; // 60s
+    private const PACER_KEY          = 'duga:api:pacer:last_at';
+    private const PACER_LOCK_KEY     = 'duga:api:pacer:lock';
+
+    private function pacerIntervalMs(): int { return (int) config('duga.pacer_interval_ms', 1100); } // 1.1秒
+
+    private function cbOpenForSeconds(): int
+    {
+        // 429連続ヒット時に開ける時間
+        return (int) config('duga.circuit_seconds', 60);
+    }
 
     /**
      * API から productId をキーに1件取得し、DBへ保存して返す
      */
-    public function fetchAndUpsertByProductId(string $productId): ?DugaProduct
+    public function fetchAndUpsertByProductId(string $productId, bool $force = false): ?DugaProduct
     {
         $endpoint = config('duga.endpoint', 'https://affapi.duga.jp/search');
 
-        // ---- 直列化（同時実行を1に制限）----
+        // --- サーキットが開いている間はAPIを叩かない ---
+        if (! $force && Cache::has(self::CB_KEY)) {
+            return $this->returnFromDbIfExists($productId);
+        }
+
+        // --- DB鮮度チェック（直近N時間ならAPI叩かず返す） ---
+        $freshHours = (int) (config('duga.fresh_hours', 6));
+        if (! $force && $freshHours > 0) {
+            $existing = \DB::table('duga_products')
+                ->where('productid', $productId)
+                ->first(['id', 'synced_at']);
+            if ($existing && isset($existing->synced_at)) {
+                $syncedAt = \Carbon\Carbon::parse($existing->synced_at);
+                if ($syncedAt->gt(now()->subHours($freshHours))) {
+                    return \App\Models\DugaProduct::with([
+                        'categories:id,name','performers:id,name,kana',
+                        'label:id,name','series:id,name',
+                        'directors:id,name','samples','thumbnails','saleTypes',
+                    ])->find((int)$existing->id);
+                }
+            }
+        }
+
+        // --- 同一商品クールダウン（短時間に何度も叩かない）---
+        $coolKey = "duga:cooldown:{$productId}";
+        $coolSec = (int) config('duga.product_cooldown', 5); // デフォルト5秒
+        if (! $force && Cache::has($coolKey)) {
+            return $this->returnFromDbIfExists($productId);
+        }
+
+        // --- 直列化（同時実行を1に制限）---
         $lock = Cache::lock(self::LOCK_KEY, self::LOCK_TTL);
         if (! $lock->get()) {
             // 既に誰かが叩いている → 少し待って再挑戦（軽いスピン）
@@ -46,15 +95,27 @@ class DugaIngestService
         }
 
         try {
-            // ---- グローバル・レートリミット（全プロセス共有）----
-            $allowed = RateLimiter::attempt(self::RL_KEY, self::RL_PER_MIN, function () {
+            // ---- 同一productIdのシングルフライト（同時刻に1回だけ実行）----
+            $sfKey = "duga:singleflight:{$productId}";
+            $sfLock = Cache::lock($sfKey, 15); // 15秒まで占有
+            $got = $sfLock->get();
+            if (! $got) {
+                // 先行実行がある → 最大2秒だけ待ってDBから返す（スパイク回避）
+                $sfLock->block(2);
+                return $this->returnFromDbIfExists($productId);
+            }
+
+            // ---- グローバルレートリミット（全プロセス共有: 60/min）----
+            $allowed = RateLimiter::attempt(self::RL_KEY, $this->rlPerMin(), function () {
                 // pass
             }, self::RL_DECAY);
-
             if (! $allowed) {
                 // 許容量オーバー時は少し待つ（スパイク抑制）
                 usleep(300 * 1000);
             }
+
+            // ---- 1秒ペーシング（全体で滑らかに1req/sec）----
+            $this->acquirePacedSlot();
 
             // ---- HTTP実行（本文エラー含め検知 → 指数バックオフで再試行）----
             $params = [
@@ -72,12 +133,51 @@ class DugaIngestService
             $resp = $this->httpGetWithBackoff($endpoint, $params);
             if (! $resp) return null;
 
+            // 呼び出し成功 → 商品ごとにクールダウンを貼る
+            if ($coolSec > 0) Cache::put($coolKey, 1, $coolSec);
+
             $items = $this->extractItems($resp);
             $row   = $items[0] ?? null;
             if (! $row) return null;
 
             return $this->upsertOne($row, $productId);
+        } finally {
+            optional($sfLock ?? null)->release();
+            optional($lock)->release();
+        }
+    }
 
+    /**
+     * 1秒ペーシングのスロットを取得（全プロセス共有）
+     */
+    private function returnFromDbIfExists(string $productId): ?DugaProduct
+    {
+        $existing = \DB::table('duga_products')->where('productid',$productId)->value('id');
+        if (!$existing) return null;
+
+        return \App\Models\DugaProduct::with([
+            'categories:id,name','performers:id,name,kana',
+            'label:id,name','series:id,name',
+            'directors:id,name','samples','thumbnails','saleTypes',
+        ])->find((int)$existing);
+    }
+
+    /**
+     * 1秒ペーシングのスロットを取得（全プロセス共有）
+     */
+    private function acquirePacedSlot(): void
+    {
+        $lock = Cache::lock(self::PACER_LOCK_KEY, 3);
+        $lock->block(3);
+        try {
+            $now  = (int) floor(microtime(true) * 1000);
+            $last = (int) (Cache::get(self::PACER_KEY, 0));
+            $need = $last + $this->pacerIntervalMs();
+            if ($now < $need) {
+                usleep(($need - $now) * 1000);
+                $now = (int) floor(microtime(true) * 1000);
+            }
+            Cache::put(self::PACER_KEY, $now, 60);
         } finally {
             optional($lock)->release();
         }
@@ -112,6 +212,12 @@ class DugaIngestService
                         'body'    => $json,
                         'wait_ms' => $waitMs,
                     ]);
+                    $streak = (int) Cache::increment(self::RL_STREAK_KEY);
+                    if ($streak >= 3) {
+                        Cache::put(self::CB_KEY, 1, $this->cbOpenForSeconds());
+                        Cache::forget(self::RL_STREAK_KEY);
+                    }
+
                     if ($attempt >= self::RETRY_MAX_ATTEMPTS) {
                         return null;
                     }
@@ -129,6 +235,8 @@ class DugaIngestService
                     Log::warning('duga:index api body error', ['status'=>$resp->status(),'body'=>$json]);
                     return null;
                 }
+                // 成功したので連続ヒットカウンタをリセット
+                Cache::forget(self::RL_STREAK_KEY);
 
                 return is_array($json) ? $json : null;
 
@@ -206,7 +314,7 @@ class DugaIngestService
         $base = (int) (self::RETRY_BASE_MS * (2 ** ($attempt - 1)));
         $jitter = random_int(0, self::RETRY_MAX_JITTER);
         // 上限を 8秒程度に丸める（必要に応じて調整）
-        return min($base + $jitter, 8000);
+        return min($base + $jitter, 20000);
     }
 
     /**

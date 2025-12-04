@@ -9,11 +9,14 @@ Route::get('/', [DugaApiController::class, 'index'])->name('home');
 // ★ 数字限定をやめ、英数・アンダースコア・ハイフンを許可
 Route::get('/products/{id}', [DugaApiController::class, 'show'])
     ->where('id', '[A-Za-z0-9\-_]+')
-    ->name('products.show');
+    ->name('products.show')
+    ->middleware('count.product.view');
+    
 // 詳細
 Route::get('/browse/{type}/{id}', [DugaApiController::class, 'browse'])
     ->whereIn('type', ['category','label','series','performer','keyword'])
     ->name('browse.filter');
+
 // 検索
 Route::get('/search', [DugaApiController::class, 'search'])->name('search');
 // サイトマップ

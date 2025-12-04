@@ -6,16 +6,19 @@
   $has  = fn($obj, $m) => is_object($obj) && method_exists($obj, $m);
   $hasP = fn($obj, $p) => is_object($obj) && property_exists($obj, $p);
 
+  // HTMLエンティティをデコードするヘルパー（&#039; → ' など）
+  $dec = fn($v) => is_string($v) ? html_entity_decode($v, ENT_QUOTES | ENT_HTML5, 'UTF-8') : $v;
+
   // $item が未定義 / null の場合のガード
   $item = $item ?? null;
 
   // メイン情報（すべて $has 経由）
-  $title        = $has($item,'getTitle')         ? $item->getTitle()         : '';
-  $origTitle    = $has($item,'getOriginaltitle') ? $item->getOriginaltitle()
-                  : ($has($item,'getOriginalTitle') ? $item->getOriginalTitle() : '');
+  $titleRaw      = $has($item,'getTitle')         ? $item->getTitle()         : '';
+  $origTitleRaw  = $has($item,'getOriginaltitle') ? $item->getOriginaltitle()
+                    : ($has($item,'getOriginalTitle') ? $item->getOriginalTitle() : '');
+  $makerRaw      = $has($item,'getMakername')     ? $item->getMakername()
+                    : ($has($item,'getMakerName') ? $item->getMakerName() : '');
   $caption      = $has($item,'getCaption')       ? $item->getCaption()       : '';
-  $maker        = $has($item,'getMakername')     ? $item->getMakername()
-                  : ($has($item,'getMakerName') ? $item->getMakerName() : '');
   $url          = $has($item,'getUrl')           ? $item->getUrl()           : '';
   $affUrl       = $has($item,'getAffiliateurl')  ? $item->getAffiliateurl()
                   : ($has($item,'getAffiliateUrl') ? $item->getAffiliateUrl() : '');
@@ -26,6 +29,11 @@
                   : ($has($item,'getItemNo') ? $item->getItemNo() : '');
   $price        = $has($item,'getPrice')         ? $item->getPrice()         : null;
   $volume       = $has($item,'getVolume')        ? $item->getVolume()        : '';
+
+  // ★ デコードしてから使う
+  $title     = $dec($titleRaw);
+  $origTitle = $dec($origTitleRaw);
+  $maker     = $dec($makerRaw);
 
   // ランキング/マイリスト（property_exists は is_object 前提の $hasP 経由）
   $rankingTotal = $has($item,'getRanking') ? $item->getRanking()
@@ -223,6 +231,51 @@
     'itemListElement' => $crumbsLd
   ];
 
+  // VideoObject JSON-LD 準備
+  $thumbList = array_values(array_filter([$posterLarge,$posterMedium,$posterSmall,$jLarge,$jMedium,$jSmall]));
+  $uploadDateISO = $releaseISO ?: ($openDate ? \Carbon\Carbon::parse($openDate)->toDateString() : null);
+
+  // VideoObjectを出す条件：タイトル＋説明＋サムネが取れているとき
+  $shouldEmitVideoLd = ($name && $desc && !empty($thumbList));
+
+  if ($shouldEmitVideoLd) {
+      $videoLd = [
+        '@context'       => 'https://schema.org',
+        '@type'          => 'VideoObject',
+        'name'           => $name,
+        'description'    => $desc,
+        'thumbnailUrl'   => $thumbList,              // 1つでもOK、配列で複数可
+        'uploadDate'     => $uploadDateISO,          // ISO8601 (YYYY-MM-DD)
+        'duration'       => $durationISO,            // 例: PT120M
+        'url'            => $canonical,
+        // サンプル動画がある場合のみ（無ければ自動でdrop）
+        'contentUrl'     => $sampleMovie ?: null,    // 直リンク or mp4
+        'embedUrl'       => $sampleMovie ?: null,    // 直接再生できるURLなら同じでも可
+        'actor'          => !empty($actorList)    ? $actorList    : null,
+        'director'       => !empty($directorList) ? $directorList : null,
+        'genre'          => !empty($categoryNames) ? $categoryNames : null,
+        'publisher'      => [
+          '@type' => 'Organization',
+          'name'  => $siteName,
+          'logo'  => [
+            '@type' => 'ImageObject',
+            'url'   => asset('favicon.ico'),
+          ],
+        ],
+        'isFamilyFriendly' => false,
+        // 視聴アクション（公式 or アフィ先へ）
+        'potentialAction' => [
+          '@type' => 'WatchAction',
+          'target'=> $affUrl ?: ($url ?: $canonical),
+        ],
+        // 連動していれば評価も付与
+        'aggregateRating' => $aggregateRating ?: null,
+      ];
+
+      // nullを除去（第2引数でnullのみ落とす）
+      $videoLd = array_filter($videoLd, fn($v) => !is_null($v));
+    }
+
   // SEO タイトル
   $seoTitle = $title ?: '作品詳細';
   if (!empty($performers) && isset($performers[0]) && is_object($performers[0]) && method_exists($performers[0],'getName')) {
@@ -231,6 +284,74 @@
     $seoTitle .= '｜'.$categories[0]->getName();
   }
   $seoTitle .= ' | 無料サンプル動画あり | DUGAサンプル動画見放題';
+
+    // 作品固有の自動リード文（独自テキスト）
+  // --- 主なカテゴリ・出演者名を整理 ---
+  $primaryCategoryName = $categoryNames[0] ?? null;
+
+  $performerNames = [];
+  foreach ($performers as $p) {
+    if (!is_object($p)) continue;
+    $nm = method_exists($p,'getName') ? $p->getName() : null;
+    if ($nm) $performerNames[] = $nm;
+  }
+  $performerNames = array_values(array_unique($performerNames));
+  $mainPerformerText = '';
+  if (!empty($performerNames)) {
+    if (count($performerNames) === 1) {
+      $mainPerformerText = $performerNames[0];
+    } elseif (count($performerNames) === 2) {
+      $mainPerformerText = $performerNames[0].'・'.$performerNames[1];
+    } else {
+      $mainPerformerText = $performerNames[0].' ほか';
+    }
+  }
+
+  // --- 自動生成する本文（本サイト独自の説明）---
+  $autoLeadText = '';
+  if ($title) {
+    $parts = [];
+
+    // 1行目：作品の基本情報
+    if ($maker && $primaryCategoryName && $mainPerformerText) {
+      $parts[] = "『{$title}』は、{$maker}が手掛ける{$primaryCategoryName}作品で、{$mainPerformerText}が出演するタイトルです。";
+    } elseif ($maker && $mainPerformerText) {
+      $parts[] = "『{$title}』は、{$maker}制作の作品で、{$mainPerformerText}がメインで登場します。";
+    } elseif ($maker && $primaryCategoryName) {
+      $parts[] = "『{$title}』は、{$maker}がリリースする{$primaryCategoryName}ジャンルのタイトルです。";
+    } elseif ($primaryCategoryName) {
+      $parts[] = "『{$title}』は、{$primaryCategoryName}ジャンルに分類される作品です。";
+    } else {
+      $parts[] = "『{$title}』は、DUGAで配信されているデジタル動画作品です。";
+    }
+
+    // 2行目：尺・公開時期など
+    if ($volume && $releaseDate) {
+      $parts[] = "収録時間は約{$volume}分で、{$releaseDate}ごろにリリースされたタイトルとなっています。";
+    } elseif ($volume) {
+      $parts[] = "収録時間は約{$volume}分で、じっくりと楽しめるボリューム感です。";
+    } elseif ($releaseDate) {
+      $parts[] = "{$releaseDate}ごろにリリースされた作品で、ファンからも長く視聴されているタイトルです。";
+    }
+
+    // 3行目：カテゴリ・出演者を絡めた視聴イメージ
+    if ($primaryCategoryName && $mainPerformerText) {
+      $parts[] = "{$primaryCategoryName}系の作品や、{$mainPerformerText}出演作が好きな方にとって、チェックしておきたい1本と言えるでしょう。";
+    } elseif ($primaryCategoryName) {
+      $parts[] = "{$primaryCategoryName}ジャンルの作品を探している方におすすめです。";
+    } elseif ($mainPerformerText) {
+      $parts[] = "{$mainPerformerText}の出演作をまとめて視聴したい方にも、ラインナップの一つとして押さえておきたい作品です。";
+    }
+
+    // 4行目：サンプル動画・購入導線への言及
+    if ($sampleMovie || $sampleCapture) {
+      $parts[] = "まずは無料サンプル動画で雰囲気を確認してから、本編の購入や視聴プランを検討してみてください。";
+    } else {
+      $parts[] = "作品ページでは詳細な内容紹介や関連タイトルも確認できるので、興味があればチェックしてみましょう。";
+    }
+
+    $autoLeadText = implode("\n", array_filter($parts));
+  }
 @endphp
 
 @section('title', $seoTitle)
@@ -253,6 +374,10 @@
 
   @if(!empty($shouldEmitProductLd) && $shouldEmitProductLd)
     <script type="application/ld+json">{!! json_encode($productLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES, 512) !!}</script>
+  @endif
+
+  @if(!empty($shouldEmitVideoLd) && $shouldEmitVideoLd)
+    <script type="application/ld+json">{!! json_encode($videoLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES, 512) !!}</script>
   @endif
   <script type="application/ld+json">{!! json_encode($breadcrumbLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES, 512) !!}</script>
 
@@ -284,7 +409,43 @@
     ];
   @endphp
   <script type="application/ld+json">{!! json_encode($faqLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES, 512) !!}</script>
-@endsection
+
+    @if($affUrl)
+        {{-- 画面下固定のCTAバー --}}
+        <div id="stickyCta"
+            class="fixed inset-x-0 bottom-0 z-40 bg-white/95 border-t border-gray-200 shadow-lg backdrop-blur
+                    translate-y-full opacity-0 pointer-events-none
+                    transition-all duration-300">
+            <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-3">
+
+            {{-- 左側：作品名などのテキスト --}}
+            <div class="min-w-0 flex-1">
+                <p class="text-[11px] text-gray-500 hidden sm:block">当サイトのリンクの一部は広告（アフィリエイトリンク）です。</p>
+                <p class="text-xs sm:text-sm font-medium text-gray-800 truncate">
+                『{{ $title }}』をDUGA公式サイトで視聴できます。
+                </p>
+                @if(!empty($performerNames))
+                <p class="text-[11px] text-gray-600 hidden sm:block">
+                    主な出演：{{ implode('、', array_slice($performerNames, 0, 2)) }}
+                </p>
+                @endif
+            </div>
+
+            {{-- 右側：ボタン --}}
+            <div class="shrink-0">
+                <a href="{{ $affUrl }}"
+                target="_blank"
+                rel="sponsored nofollow noopener"
+                class="inline-flex items-center justify-center px-4 sm:px-6 py-2.5 rounded-full text-xs sm:text-sm font-bold
+                        text-white bg-gradient-to-r from-rose-500 via-pink-500 to-red-600
+                        shadow-lg hover:shadow-xl hover:brightness-110 hover:scale-[1.03]
+                        transition-transform duration-200">
+                🎬 今すぐ公式で視聴する
+                </a>
+            </div>
+            </div>
+        </div>
+    @endif
 
 @section('content')
   @php
@@ -405,6 +566,32 @@
           <div class="mt-4 whitespace-pre-line leading-relaxed">{{ $caption }}</div>
         @endif
 
+        {{-- ▼ 作品ごとの自動生成テキスト（本サイト独自の解説ゾーン） --}}
+        @if(!empty($autoLeadText))
+          <section class="mt-6 border-t border-dashed border-gray-200 pt-4 space-y-2">
+            <h2 class="text-base font-semibold text-gray-800">
+              この作品の見どころ・おすすめポイント
+            </h2>
+            <p class="text-sm leading-relaxed whitespace-pre-line text-gray-800">
+              {{ $autoLeadText }}
+            </p>
+
+            @if(!empty($performerNames) || !empty($categoryNames))
+              <ul class="mt-2 text-xs text-gray-600 list-disc list-inside space-y-1">
+                @if(!empty($performerNames))
+                  <li>主な出演者：{{ implode('、', array_slice($performerNames, 0, 3)) }}</li>
+                @endif
+                @if(!empty($categoryNames))
+                  <li>主なカテゴリ：{{ implode('／', array_slice($categoryNames, 0, 3)) }}</li>
+                @endif
+                @if($maker)
+                  <li>メーカー：{{ $maker }}</li>
+                @endif
+              </ul>
+            @endif
+          </section>
+        @endif
+
         <div class="mt-6 flex justify-center">
           @if($affUrl)
             <a href="{{ $affUrl }}"
@@ -467,7 +654,7 @@
           </div>
         </div>
 
-        <div class="mt-4">
+        <div class="mt-6 flex justify-center">
           @if($affUrl)
             <a href="{{ $affUrl }}" target="_blank" rel="sponsored nofollow noopener"
                class="inline-flex items-center justify-center px-6 py-3 rounded-xl text-white font-bold
@@ -649,6 +836,46 @@
           @endif
         </div>
       @endif
+
+      {{-- 右カラムなどに差し込み --}}
+      {{-- 人気作品TOP10（タイトル＋サムネ） --}}
+      @if(!empty($top7))
+        <div class="bg-white rounded-lg shadow p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">人気作品TOP10</h2>
+            <div class="text-xs text-gray-500">直近7日</div>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+            @foreach($top7 as $i => $row)
+              @php
+                // 配列/オブジェクト両対応
+                $pid   = is_array($row) ? ($row['productid'] ?? null) : ($row->productid ?? null);
+                $ttl   = is_array($row) ? ($row['title']     ?? '')   : ($row->title     ?? '');
+                $thumb = is_array($row) ? ($row['thumb']     ?? '')   : ($row->thumb     ?? '');
+                $url   = is_array($row) ? ($row['url']       ?? '#')  : ($row->url       ?? '#');
+                $views = (int)(is_array($row) ? ($row['views'] ?? 0)  : ($row->views ?? 0));
+              @endphp
+
+              <a href="{{ $url }}" class="group block rounded overflow-hidden border hover:shadow transition bg-white">
+                <div class="relative">
+                  <img src="{{ $thumb }}" alt="{{ $ttl }}" class="w-full aspect-[12/7] object-cover">
+                  <span class="absolute left-2 top-2 inline-flex items-center justify-center rounded-full text-[11px] font-bold px-2 py-0.5
+                              {{ $i<3 ? 'bg-rose-600 text-white' : 'bg-gray-200 text-gray-700' }}">
+                    {{ $i+1 }}
+                  </span>
+                </div>
+                <div class="p-2">
+                  <div class="text-xs font-medium line-clamp-2 group-hover:underline">{{ $ttl ?: '#'.$pid }}</div>
+                  <div class="mt-1 text-[11px] text-gray-500">👀 {{ number_format($views) }}</div>
+                </div>
+              </a>
+            @endforeach
+          </div>
+        </div>
+      @endif
+
+
     </div>
   </div>
 
@@ -804,4 +1031,24 @@
       });
     })();
   </script>
+  <script>
+  (function () {
+    const bar = document.getElementById('stickyCta');
+    if (!bar) return;
+
+    const showThreshold = 400; // この高さ(px)以上スクロールしたら表示
+
+    function onScroll() {
+      const y = window.scrollY || window.pageYOffset || 0;
+      if (y > showThreshold) {
+        bar.classList.remove('translate-y-full', 'opacity-0', 'pointer-events-none');
+      } else {
+        bar.classList.add('translate-y-full', 'opacity-0', 'pointer-events-none');
+      }
+    }
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll(); // 読み込み時にも一回判定
+  })();
+</script>
 @endsection

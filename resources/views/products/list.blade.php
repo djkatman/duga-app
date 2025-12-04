@@ -91,6 +91,42 @@
 
   // SEO訴求ワード追加
   $seoTitle = $base.' | 無料サンプル動画あり | DUGAサンプル動画見放題';
+
+  // ====== 一覧ページ用の動的説明文（SEO用 100〜200字） ======
+  $introText = '';
+
+  // 種類ごとに説明文のテンプレートを作る
+  switch ($type) {
+      case 'category':
+          if (!empty($filterName)) {
+              $introText = "「{$filterName}」カテゴリの動画一覧です。DUGAで配信されている{$filterName}ジャンルの人気作品・新着タイトルをまとめてチェックできます。無料サンプル動画つきで内容を確認でき、出演者情報や関連作品も比較しやすくなっています。";
+          }
+          break;
+
+      case 'performer':
+          if (!empty($filterName)) {
+              $introText = "{$filterName}さんが出演する作品の一覧です。出演作の傾向や新着タイトル、人気順での並べ替えができ、{$filterName}さんの出演作品をまとめて探したい方に最適です。サンプル動画つきで内容も確認できます。";
+          }
+          break;
+
+      case 'series':
+          if (!empty($filterName)) {
+              $introText = "シリーズ「{$filterName}」の作品一覧です。過去作から最新作までまとめてチェックでき、シリーズの特徴や出演者、各話の違いを比較しながら視聴作品を選ぶことができます。";
+          }
+          break;
+
+      case 'label':
+          if (!empty($filterName)) {
+              $introText = "レーベル「{$filterName}」の作品一覧です。{$filterName}が提供する人気作品・新着作品をまとめて確認でき、ジャンルや出演者の傾向を把握しながら作品選びができます。";
+          }
+          break;
+
+      case 'keyword':
+          if (!empty($filterId)) {
+              $introText = "「{$filterId}」の検索結果一覧です。キーワードに関連する作品を人気順・新着順で絞り込みながら探すことができ、無料サンプル動画で内容をチェックしつつ自分に合ったタイトルを選べます。";
+          }
+          break;
+  }
 @endphp
 
 @section('title', $seoTitle)
@@ -145,6 +181,12 @@
     </div>
   </div>
 
+  {{-- ▼ 一覧ページの冒頭説明（SEO強化） --}}
+    @if(!empty($introText))
+    <p class="mt-3 mb-4 text-sm text-gray-700 leading-relaxed">
+        {{ $introText }}
+    </p>
+    @endif
   @if($items->isEmpty())
     <div class="rounded border border-dashed p-8 text-center text-gray-500">条件に一致する商品がありません。</div>
   @else

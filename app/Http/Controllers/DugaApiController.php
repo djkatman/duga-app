@@ -12,8 +12,10 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use App\Services\DugaIngestService;
+use App\Services\PopularViewService;
 use App\Models\DugaProduct;
 use App\ViewModels\DugaProductView;
+
 use Throwable;
 
 class DugaApiController extends Controller
@@ -87,7 +89,7 @@ class DugaApiController extends Controller
             \Log::debug('duga:index raw keys', ['keys' => array_keys($json)]);
 
             // 30分キャッシュ
-            Cache::put($cacheKey, $json, now()->addMinutes(30));
+            Cache::put($cacheKey, $json, now()->addMinutes(180));
             $data = $json;
         }
 
@@ -183,11 +185,22 @@ class DugaApiController extends Controller
     //     ]);
     // }
 
-    public function show(string $id)
+    public function show(string $id, PopularViewService $popular)
     {
         // $cacheKey = "duga:product:{$id}";
         // 旧キャッシュと衝突しないようにキーを更新（v2 など）
         $cacheKey = "duga:vm:v2:{$id}";
+
+        $url = null;
+        $top7 =null;
+        $top30 = null;
+
+        $top7  = $popular->topByViews(7, 12);
+        $top30 = $popular->topByViews(30, 12);
+        
+        // 追加：カード化（タイトル・サムネ・URL）
+        $cards7  = $this->buildCardsFromRanking($top7);
+        $cards30 = $this->buildCardsFromRanking($top30);
 
         // 1) まずキャッシュを素直に読む（あれば即返す）
         if ($vm = Cache::get($cacheKey)) {
@@ -196,8 +209,11 @@ class DugaApiController extends Controller
                 // 同期で DB に埋める（確実に登録させたい場合は同期のままが安全）
                 $this->ingest->fetchAndUpsertByProductId($id);
             }
+            // $url = $vm->url;
+            // セール情報を取得
+            // $sale = $url ? $scraper->fetch($url) : ['is_sale' => false, 'label' => null, 'until' => null, 'items' => []];
             $related = $this->fetchRelatedItems($vm, limit: 12);
-            return view('products.show', ['item' => $vm, 'related' => $related]);
+            return view('products.show', ['item' => $vm, 'related' => $related, 'top7'=>$cards7,'top30'=>$cards30]);
         }
 
         // 2) DB に無ければ API → DB upsert → 再取得
@@ -216,9 +232,127 @@ class DugaApiController extends Controller
         // 4) 完成した ViewModel を 24h キャッシュ
         Cache::put($cacheKey, $vm, now()->addDay());
 
+        // $url = $vm->url;
+        // セール情報を取得
+        // $sale = $url ? $scraper->fetch($url) : ['is_sale' => false, 'label' => null, 'until' => null, 'items' => []];
+
         // 5) 画面へ
         $related = $this->fetchRelatedItems($vm, limit: 12);
         return view('products.show', ['item' => $vm, 'related' => $related]);
+    }
+
+    /**
+     * ランキング（productid, views）配列をカード配列へ
+     * 返却: [['productid'=>..., 'title'=>..., 'thumb'=>..., 'url'=>..., 'views'=>...], ...]
+     */
+    private function buildCardsFromRanking(array $ranking): array
+    {
+        $out = [];
+        foreach ($ranking as $row) {
+            // $row は配列 or stdClass 両対応
+            $pid   = is_array($row) ? ($row['productid'] ?? null) : ($row->productid ?? null);
+            $views = (int) (is_array($row) ? ($row['views'] ?? 0) : ($row->views ?? 0));
+            if (!$pid) continue;
+
+            $out[] = $this->resolveCard($pid, $views);
+        }
+        return $out;
+    }
+
+    /**
+     * 単一作品のカード情報を取得（キャッシュ→DB→API）
+     */
+    private function resolveCard(string $productId, int $views = 0): array
+    {
+        // 1) 作品ページ用キャッシュに ViewModel があれば流用
+        $vm = Cache::get("duga:vm:v2:{$productId}");
+        if ($vm && is_object($vm)) {
+            [$title, $thumb] = $this->extractTitleThumbFromVm($vm);
+            return [
+                'productid' => $productId,
+                'title'     => $title ?: ('#'.$productId),
+                'thumb'     => $thumb,
+                'url'       => route('products.show', ['id'=>$productId]),
+                'views'     => $views,
+            ];
+        }
+
+        // 2) DBにあれば最小コストでタイトル＆画像を引き出す
+        if ($model = $this->findProduct($productId)) {
+            $vm = $this->toViewModel($model);
+            [$title, $thumb] = $this->extractTitleThumbFromVm($vm);
+            // 次に備えて軽くキャッシュ
+            Cache::put("duga:vm:v2:{$productId}", $vm, now()->addHours(6));
+            return [
+                'productid' => $productId,
+                'title'     => $title ?: ('#'.$productId),
+                'thumb'     => $thumb,
+                'url'       => route('products.show', ['id'=>$productId]),
+                'views'     => $views,
+            ];
+        }
+
+        // 3) 無ければAPI → upsert → 取り直し
+        try {
+            $this->ingest->fetchAndUpsertByProductId($productId);
+            if ($model = $this->findProduct($productId)) {
+                $vm = $this->toViewModel($model);
+                [$title, $thumb] = $this->extractTitleThumbFromVm($vm);
+                Cache::put("duga:vm:v2:{$productId}", $vm, now()->addHours(6));
+                return [
+                    'productid' => $productId,
+                    'title'     => $title ?: ('#'.$productId),
+                    'thumb'     => $thumb,
+                    'url'       => route('products.show', ['id'=>$productId]),
+                    'views'     => $views,
+                ];
+            }
+        } catch (\Throwable $e) {
+            // ログだけ残してフォールバック
+            \Log::warning('resolveCard failed: '.$productId.' '.$e->getMessage());
+        }
+
+        // 4) それでもダメならプレースホルダ
+        return [
+            'productid' => $productId,
+            'title'     => '#'.$productId,
+            'thumb'     => asset('images/placeholder-wide.png'),
+            'url'       => route('products.show', ['id'=>$productId]),
+            'views'     => $views,
+        ];
+    }
+
+    /**
+     * ViewModel からタイトルとサムネイルURLを安全に抽出
+     */
+    private function extractTitleThumbFromVm(object $vm): array
+    {
+        $title = method_exists($vm,'getTitle') ? (string)$vm->getTitle() : '';
+        $thumb = null;
+
+        $poster = method_exists($vm,'getPosterImage') ? $vm->getPosterImage() : null;
+        if (is_object($poster)) {
+            if (method_exists($poster,'getSmall') && $poster->getSmall())   $thumb = $thumb ?: $poster->getSmall();
+            if (method_exists($poster,'getMedium') && $poster->getMedium()) $thumb = $thumb ?: $poster->getMedium();
+            if (method_exists($poster,'getMidium') && $poster->getMidium()) $thumb = $thumb ?: $poster->getMidium();
+            if (method_exists($poster,'getLarge') && $poster->getLarge())   $thumb = $thumb ?: $poster->getLarge();
+        }
+
+        // ジャケットで代替
+        if (!$thumb) {
+            $j = method_exists($vm,'getJacketImage') ? $vm->getJacketImage() : null;
+            if (is_object($j)) {
+                if (method_exists($j,'getSmall') && $j->getSmall())   $thumb = $thumb ?: $j->getSmall();
+                if (method_exists($j,'getMedium') && $j->getMedium()) $thumb = $thumb ?: $j->getMedium();
+                if (method_exists($j,'getMidium') && $j->getMidium()) $thumb = $thumb ?: $j->getMidium();
+                if (method_exists($j,'getLarge') && $j->getLarge())   $thumb = $thumb ?: $j->getLarge();
+            }
+        }
+
+        // プレースホルダ
+        if (!$thumb) $thumb = asset('images/placeholder-wide.png');
+
+        return [$title, $thumb];
     }
 
     /** 関連をまとめてロードして1件取得 */
@@ -316,7 +450,7 @@ class DugaApiController extends Controller
         );
 
         // 30分キャッシュ
-        $data = Cache::remember($cacheKey, now()->addMinutes(30), function () use ($filterKey, $id, $sort, $perPage, $offset) {
+        $data = Cache::remember($cacheKey, now()->addMinutes(180), function () use ($filterKey, $id, $sort, $perPage, $offset) {
             $endpoint = 'https://affapi.duga.jp/search';
             $resp = Http::timeout(10)->retry(2, 200)->get($endpoint, [
                 'appid'    => config('duga.app_id'),
@@ -643,7 +777,7 @@ class DugaApiController extends Controller
         // キャッシュキー（パラメータで作成）
         $key = 'duga:search:'.md5(json_encode($extraParams).':'.$hits);
 
-        return Cache::remember($key, now()->addMinutes(30), function () use ($extraParams, $hits) {
+        return Cache::remember($key, now()->addMinutes(180), function () use ($extraParams, $hits) {
             $endpoint = 'https://affapi.duga.jp/search';
             $query = array_merge([
                 'appid'    => config('duga.app_id'),

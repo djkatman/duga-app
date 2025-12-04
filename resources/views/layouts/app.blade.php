@@ -30,17 +30,42 @@
         </a>
 
         @php
-          // 現在のソート／クエリ（pageだけはリセットしたいので除外）
-          $currentSort = request('sort', 'favorite');
-          $baseQuery   = request()->except('page', 'sort');
-          $sortMap = [
-            'favorite' => '人気順',
-            'release'  => '発売日順',
-            'new'      => '新着順',
-            'price'    => '価格順',
-            'rating'   => '評価順',
-            'mylist'   => 'マイリスト登録順',
-          ];
+            // 現在のソート（指定がなければ favorite）
+            $currentSort = request('sort', 'favorite');
+
+            // page / sort 以外のクエリは引き継ぐ（q や per_page など）
+            $baseQuery = request()->except('page', 'sort');
+
+            $sortMap = [
+                'favorite' => '人気順',
+                'release'  => '発売日順',
+                'new'      => '新着順',
+                'price'    => '価格順',
+                'rating'   => '評価順',
+                'mylist'   => 'マイリスト登録順',
+            ];
+
+            // ★ 今いるルート名を判定
+            $baseRouteName   = 'home';
+            $fixedRouteParams = [];
+
+            if (request()->routeIs('browse.filter')) {
+                // カテゴリ・出演者などの絞り込み一覧
+                $baseRouteName = 'browse.filter';
+                $fixedRouteParams = [
+                    'type' => request()->route('type'),
+                    'id'   => request()->route('id'),
+                ];
+            } elseif (request()->routeIs('search')) {
+                // 検索結果ページ
+                $baseRouteName = 'search';
+                // 検索キーワード q は $baseQuery に含まれているのでここでは固定パラメータなしでOK
+                $fixedRouteParams = [];
+            } else {
+                // トップなど
+                $baseRouteName   = 'home';
+                $fixedRouteParams = [];
+            }
         @endphp
 
         {{-- PC: 検索フォーム --}}
@@ -59,15 +84,23 @@
       {{-- PC: ソートリンク --}}
       <nav class="hidden md:flex items-center gap-2 ml-4">
         @foreach($sortMap as $key => $label)
-          @php
-            $url = route('home', array_merge($baseQuery, ['sort' => $key]));
+            @php
+            $url = route(
+                $baseRouteName,
+                array_merge(
+                    $fixedRouteParams,       // browse.filter の type / id など
+                    $baseQuery,              // q / per_page など（page, sort は除外済）
+                    ['sort' => $key]         // 新しいソート条件
+                )
+            );
             $active = $currentSort === $key;
-          @endphp
-          <a href="{{ $url }}"
-             class="text-sm px-3 py-1.5 rounded {{ $active ? 'bg-indigo-600 text-white' : 'text-gray-700 hover:bg-gray-100' }}"
-             aria-current="{{ $active ? 'page' : 'false' }}">
+            @endphp
+
+            <a href="{{ $url }}"
+            class="text-sm px-3 py-1.5 rounded {{ $active ? 'bg-indigo-600 text-white' : 'text-gray-700 hover:bg-gray-100' }}"
+            aria-current="{{ $active ? 'page' : 'false' }}">
             {{ $label }}
-          </a>
+            </a>
         @endforeach
         <a href="{{ route('about') }}"
           class="text-sm text-gray-700 hover:text-indigo-600 px-3 py-2">
@@ -79,7 +112,7 @@
         {{-- Mobile: Hamburger --}}
         <button id="menuButton"
           class="md:hidden inline-flex items-center justify-center rounded-md p-2 hover:bg-gray-100 focus:outline-none"
-          aria-expanded="false" aria-controls="mobileMenu">
+          aria-label="Menu Button" aria-expanded="false" aria-controls="mobileMenu">
           <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none">
             <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
           </svg>
@@ -108,27 +141,38 @@
       <div class="text-xs text-gray-500 mb-2">表示順</div>
       <nav class="grid grid-cols-2 gap-2 text-sm">
         @foreach($sortMap as $key => $label)
-          @php
-            $url = route('home', array_merge($baseQuery, ['sort' => $key]));
+            @php
+            $url = route(
+                $baseRouteName,
+                array_merge(
+                    $fixedRouteParams,       // browse.filter の type / id など
+                    $baseQuery,              // q / per_page など（page, sort は除外済）
+                    ['sort' => $key]         // 新しいソート条件
+                )
+            );
             $active = $currentSort === $key;
-          @endphp
-          <a href="{{ $url }}"
-             class="block px-3 py-2 rounded border {{ $active ? 'border-indigo-600 text-indigo-700 bg-indigo-50' : 'border-gray-200 text-gray-700 hover:bg-gray-100' }}"
-             aria-current="{{ $active ? 'page' : 'false' }}">
+            @endphp
+
+            <a href="{{ $url }}"
+            class="text-sm px-3 py-1.5 rounded {{ $active ? 'bg-indigo-600 text-white' : 'text-gray-700 hover:bg-gray-100' }}"
+            aria-current="{{ $active ? 'page' : 'false' }}">
             {{ $label }}
-          </a>
+            </a>
         @endforeach
-      </nav>
-    </div>
-    <a href="{{ route('about') }}"
-          class="xs-sm text-gray-700 hover:text-indigo-600 px-3 py-2">
-          About
+        <a href="{{ route('about') }}"
+            class="block px-3 py-2 rounded border border-gray-200 text-gray-700 hover:bg-gray-100">
+            About
         </a>
+      </nav>
+
+      </div>
+    </div>
+
   </div>
 </header>
 
   {{-- Main --}}
-  <main class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+  <main class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 pb-24">
     @yield('content')
   </main>
 
@@ -136,6 +180,18 @@
   <footer class="mt-12 border-t border-gray-200 bg-white">
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 text-sm text-gray-600">
       <p>© {{ date('Y') }} DUGAサンプル動画見放題</p>
+      {{-- DUGA バナー --}}
+      <div class="mt-4">
+        <a href="https://click.duga.jp/aff/api/8491-01" target="_blank" rel="noopener noreferrer nofollow sponsored">
+          <img
+            src="https://ad.duga.jp/img/webservice_142.gif"
+            alt="DUGAウェブサービス"
+            width="142"
+            height="18"
+            class="opacity-80 hover:opacity-100 transition"
+          >
+        </a>
+      </div>
     </div>
   </footer>
 
