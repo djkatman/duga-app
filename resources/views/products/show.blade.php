@@ -143,26 +143,28 @@
   }
 
   // offers の決定ロジック
-  $offers = null;
-  if (!is_null($priceValue)) {
+$offers = null;
+if (!is_null($priceValue)) {
     $offers = [
       '@type'         => 'Offer',
       'price'         => number_format($priceValue, 0, '.', ''),
       'priceCurrency' => $currency,
-      'url'           => $affUrl ?: $canonical,
+      // ★ 自サイトの商品URLに固定
+      'url'           => $canonical,
       'availability'  => 'https://schema.org/InStock',
     ];
-  } elseif (!empty($salePrices)) {
+} elseif (!empty($salePrices)) {
     $offers = [
       '@type'         => 'AggregateOffer',
       'offerCount'    => count($salePrices),
       'lowPrice'      => number_format((float)$lowPrice, 0, '.', ''),
       'priceCurrency' => $currency,
       'highPrice'     => number_format((float)$highPrice, 0, '.', ''),
-      'url'           => $affUrl ?: $canonical,
-      // 'offers'     => $saleOffers, // 必要なら展開
+      // ★ ここも自サイトURLに固定
+      'url'           => $canonical,
+      // 'offers'     => $saleOffers,
     ];
-  }
+}
 
   // aggregateRating
   $aggregateRating = null;
@@ -193,7 +195,6 @@
       'productionCompany' => $maker ?: null,
       'actor'         => !empty($actorList) ? $actorList : null,
       'director'      => !empty($directorList) ? $directorList : null,
-      'duration'      => $durationISO,
       'offers'        => $offers,
       'aggregateRating'=> $aggregateRating,
     ];
@@ -352,6 +353,41 @@
 
     $autoLeadText = implode("\n", array_filter($parts));
   }
+
+  // ★ ランダムで変化させるためのパターン番号
+  $pattern = rand(1,5);
+
+  // 出演者名（1人の場合は強調）
+  $leadActor = $mainPerformerText ? "出演：{$mainPerformerText}" : '';
+
+  // カテゴリ名（ジャンル強調）
+  $leadCategory = $primaryCategoryName ? "{$primaryCategoryName}ジャンル" : '';
+
+  // レーベルを強調
+  $leadLabel = $maker ? "{$maker}制作" : '';
+
+  // 生成コンテンツ（ランダム）
+  switch ($pattern) {
+      case 1:
+          $editorComment = "本作『{$title}』は、{$leadLabel}ならではの世界観と、{$leadCategory}要素がバランス良く融合した一本です。{$leadActor}の魅力が最大限に引き出されており、同ジャンルの中でも完成度の高い作品といえます。";
+          break;
+
+      case 2:
+          $editorComment = "「{$title}」は、{$leadActor}の演技や個性が光る{$leadCategory}系タイトルです。ストーリーや演出も丁寧に作り込まれており、{$maker}作品をよく視聴するファンにもおすすめの内容となっています。";
+          break;
+
+      case 3:
+          $editorComment = "本作は{$leadCategory}を軸にしつつ、{$leadActor}の魅力がダイレクトに伝わる構成となっています。{$maker}作品の中でも視聴満足度の高い仕上がりで、ジャンル初心者から愛好者まで幅広く楽しめる内容です。";
+          break;
+
+      case 4:
+          $editorComment = "『{$title}』は、映像・演出・出演者バランスの完成度が高い作品です。{$leadLabel}の丁寧な作り込みが随所に感じられ、特に{$leadActor}ファンには必見の一本といえるでしょう。";
+          break;
+
+      default:
+          $editorComment = "作品全体として{$leadCategory}の魅力が強く感じられ、{$leadActor}の世界観がしっかり表現されています。{$maker}らしい制作姿勢が作品に深みを与えており、同系統のタイトルを探している方にもおすすめです。";
+          break;
+  }
 @endphp
 
 @section('title', $seoTitle)
@@ -380,35 +416,6 @@
     <script type="application/ld+json">{!! json_encode($videoLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES, 512) !!}</script>
   @endif
   <script type="application/ld+json">{!! json_encode($breadcrumbLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES, 512) !!}</script>
-
-  {{-- ▼ 追加：FAQPage JSON-LD（視聴ガイドのQ&A） --}}
-  @php
-    $faqPairs = [
-      [
-        'q' => 'DUGAの作品はどの端末で視聴できますか？',
-        'a' => 'パソコン・スマホ・タブレットに対応し、ブラウザからストリーミング再生できます。購入済み作品はマイページの「購入履歴」からいつでも再生できます。'
-      ],
-      [
-        'q' => '無料サンプルはありますか？',
-        'a' => 'ほとんどの作品で無料サンプル動画が用意されています。画質や内容を確認してから購入や見放題プランをご検討ください。'
-      ],
-    ];
-    $faqLd = [
-      '@context' => 'https://schema.org',
-      '@type'    => 'FAQPage',
-      'mainEntity' => array_map(function ($qa) {
-        return [
-          '@type'          => 'Question',
-          'name'           => $qa['q'],
-          'acceptedAnswer' => [
-            '@type' => 'Answer',
-            'text'  => $qa['a'],
-          ],
-        ];
-      }, $faqPairs),
-    ];
-  @endphp
-  <script type="application/ld+json">{!! json_encode($faqLd, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES, 512) !!}</script>
 
     @if($affUrl)
         {{-- 画面下固定のCTAバー --}}
@@ -562,6 +569,13 @@
           @if($mylistTotal  !== null) <div><span class="text-gray-500">マイリスト：</span>{{ $mylistTotal }}件</div>@endif
         </div>
 
+        @if(!empty($editorComment))
+        <div class="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm leading-relaxed">
+            <h3 class="font-semibold text-gray-800 mb-1">編集部からのレビュー</h3>
+            <p>{{ $editorComment }}</p>
+        </div>
+        @endif
+
         @if($caption)
           <div class="mt-4 whitespace-pre-line leading-relaxed">{{ $caption }}</div>
         @endif
@@ -590,6 +604,59 @@
               </ul>
             @endif
           </section>
+        @endif
+
+        @php
+        $extraInfo = "";
+
+        if ($primaryCategoryName) {
+            $extraInfo .= "本作の主要ジャンルである「{$primaryCategoryName}」は、視聴者からの人気が高く、同傾向の作品でも特に再生されやすいテーマです。";
+        }
+
+        if ($mainPerformerText) {
+            $extraInfo .= "{$mainPerformerText}の出演作は、ジャンルに関わらず安定した満足度が得られる傾向があり、本作でもその魅力が十分に引き出されています。";
+        }
+
+        if ($maker) {
+            $extraInfo .= "{$maker}は映像クオリティに定評があり、作品全体の完成度が高い点も特徴です。";
+        }
+        @endphp
+
+        @if(!empty($extraInfo))
+        <div class="mt-4 bg-white border-l-4 border-indigo-500 pl-4 text-sm leading-relaxed">
+            <p>{{ $extraInfo }}</p>
+        </div>
+        @endif
+
+        @php
+        $recommendations = [];
+
+        if($primaryCategoryName){
+            $recommendations[] = "{$primaryCategoryName}好きなら間違いなく楽しめる構成";
+        }
+
+        if($mainPerformerText){
+            $recommendations[] = "{$mainPerformerText}ファンに強く推奨できる内容";
+        }
+
+        if($volume){
+            $recommendations[] = "約{$volume}分と、じっくり視聴したい方にも最適";
+        }
+
+        if($releaseDate){
+            $recommendations[] = "{$releaseDate}リリースで、比較的新しい作品を探している人に向いている";
+        }
+        @endphp
+
+        @if(!empty($recommendations))
+        <div class="mt-4 bg-rose-50 border-l-4 border-rose-400 pl-4 py-2 rounded">
+        <h3 class="font-semibold text-rose-700 mb-1 text-sm">こんな方におすすめ</h3>
+        <ul class="list-disc ml-5 text-sm text-rose-700 space-y-1">
+            @foreach($recommendations as $rec)
+            <li>{{ $rec }}</li>
+            @endforeach
+        </ul>
+        </div>
         @endif
 
         <div class="mt-6 flex justify-center">

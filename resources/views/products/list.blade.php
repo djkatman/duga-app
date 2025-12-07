@@ -6,6 +6,12 @@
   // 基本
   $siteName   = 'DUGAサンプル動画見放題';
 
+  // ★ 現在のルートがトップかどうか
+  $isHome = request()->routeIs('home');
+
+  // ★ 並び替えパラメータ
+  $sort = request()->get('sort'); // 'favorite' / 'new' など
+
   // 総件数
   $isPaginated = $items instanceof \Illuminate\Contracts\Pagination\Paginator;
   $total       = $isPaginated ? (int)$items->total() : (is_countable($items) ? count($items) : 0);
@@ -22,9 +28,28 @@
   // カード列挙名
   $labelText  = $labelBase.': '.(($term !== '') ? $term : '未指定');
 
-  // ページネーションURL
-  $pageNum      = $isPaginated ? $items->currentPage() : 1;
-  $canonicalUrl = $isPaginated ? $items->url($pageNum) : url()->current();
+     // ページネーションURL
+  $pageNum = $isPaginated ? $items->currentPage() : 1;
+
+  // ★ 絞り込みページかどうか（type / id が入っている前提）
+  $isFilterPage = !$isHome && !empty($type) && !empty($filterId);
+
+  if ($isHome) {
+      // トップページ（/）の canonical は常に "/" に固定
+      $canonicalUrl = url('/');
+  } elseif ($isFilterPage) {
+      // カテゴリ・レーベル・女優などの絞り込みページ
+      $canonicalParams = ['type' => $type, 'id' => $filterId];
+      if ($pageNum > 1) {
+          $canonicalParams['page'] = $pageNum;
+      }
+      $canonicalUrl = route('browse.filter', $canonicalParams);
+  } else {
+      // 念のためのフォールバック（想定外のルートなど）
+      $canonicalUrl = url()->current();
+  }
+
+  // prev / next はユーザー体験重視なので、今のままでもOK
   $prevUrl      = $isPaginated ? $items->previousPageUrl() : null;
   $nextUrl      = $isPaginated ? $items->nextPageUrl()     : null;
 
@@ -127,6 +152,19 @@
           }
           break;
   }
+
+  // ★ noindex を付ける条件
+  $shouldNoindex = false;
+
+  // 並び順がデフォルト（favorite）以外なら noindex にする
+  if (!is_null($sort) && $sort !== '' && $sort !== 'favorite') {
+      $shouldNoindex = true;
+  }
+
+  // 例：ページ番号が大きすぎる場合も noindex にしたいなら（任意）
+  if ($pageNum > 50) {
+       $shouldNoindex = true;
+  }
 @endphp
 
 @section('title', $seoTitle)
@@ -136,7 +174,10 @@
   <link rel="canonical" href="{{ $canonicalUrl }}">
   @if($prevUrl)<link rel="prev" href="{{ $prevUrl }}">@endif
   @if($nextUrl)<link rel="next" href="{{ $nextUrl }}">@endif
-
+  {{-- ★ 並び替えページ等は noindex,follow --}}
+  @if($shouldNoindex)
+    <meta name="robots" content="noindex,follow">
+  @endif
   <meta property="og:site_name" content="{{ $siteName }}">
   <meta property="og:type" content="website">
   <meta property="og:title" content="{{ $seoTitle }}">
