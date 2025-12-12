@@ -3,6 +3,9 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\DugaApiController;
 use App\Http\Controllers\SitemapController;
+use Illuminate\Session\Middleware\StartSession;
+use Illuminate\View\Middleware\ShareErrorsFromSession;
+use App\Http\Middleware\VerifyCsrfToken;
 
 Route::get('/', [DugaApiController::class, 'index'])->name('home');
 
@@ -11,7 +14,7 @@ Route::get('/products/{id}', [DugaApiController::class, 'show'])
     ->where('id', '[A-Za-z0-9\-_]+')
     ->name('products.show')
     ->middleware('count.product.view');
-    
+
 // 詳細
 Route::get('/browse/{type}/{id}', [DugaApiController::class, 'browse'])
     ->whereIn('type', ['category','label','series','performer','keyword'])

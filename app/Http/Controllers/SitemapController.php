@@ -124,10 +124,15 @@ class SitemapController extends Controller
             ]);
 
             foreach ($products as $p) {
-                $last = $p->release_date ?? $p->open_date ?? $p->updated_at ?? now();
+                $last = $p->updated_at ?? $p->release_date ?? $p->open_date ?? now();
                 if (!$last instanceof Carbon) {
                     $last = Carbon::parse((string)$last);
                 }
+                // ★ 未来日付は now() に丸める（または updated_at を優先）
+                if ($last->isFuture()) {
+                    $last = now();
+                }
+
                 $urls[] = $this->urlRow(
                     route('products.show', ['id' => $p->productid]),
                     'weekly',
