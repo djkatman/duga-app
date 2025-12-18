@@ -6,6 +6,7 @@ use App\Http\Controllers\SitemapController;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use App\Http\Middleware\VerifyCsrfToken;
+use App\Http\Controllers\FeedController;
 
 Route::get('/', [DugaApiController::class, 'index'])->name('home');
 
@@ -36,3 +37,6 @@ Route::get('/about', function () {
         'pageDesc'  => 'DUGAサンプル動画見放題サイトの概要、ポリシー、問い合わせ先などを掲載します。',
     ]);
 })->name('about');
+
+// RSS2.0
+Route::get('/feed.xml', [FeedController::class, 'index'])->name('feed');
