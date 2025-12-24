@@ -5,14 +5,25 @@ namespace App\Http\Controllers;
 use App\Models\DugaProduct;
 use Illuminate\Http\Response;
 use Illuminate\Support\Str;
+use Illuminate\Support\Carbon;
 
 class FeedController extends Controller
 {
     public function index(): Response
     {
-        // 好みで基準を変更：release_date優先 → 無ければcreated_at
+
+        $now = Carbon::today(); // 今日の00:00基準（必要なら now() に変更）
+
         $items = DugaProduct::query()
-            ->orderByRaw('release_date IS NULL') // release_dateがあるものを先に
+            ->where(function ($q) use ($now) {
+                $q
+                // release_date が「今日以前」
+                ->whereDate('release_date', '<=', $now)
+                // または release_date が NULL（未設定）
+                ->orWhereNull('release_date');
+            })
+            // 並び順：release_date 優先 → created_at
+            ->orderByRaw('release_date IS NULL')
             ->orderByDesc('release_date')
             ->orderByDesc('created_at')
             ->limit(50)
