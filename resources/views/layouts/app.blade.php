@@ -7,7 +7,13 @@
   <link rel="alternate" type="application/rss+xml" title="DUGAサンプル動画見放題 &raquo; フィード" href="https://duga-adult.com/feed.xml"/>
   {{-- Tailwind / Vite --}}
   @vite(['resources/css/app.css', 'resources/js/app.js'])
-  @yield('meta')
+
+  {{-- ★ ここを「metaのデフォルト + 各ページで上書き」方式にする --}}
+    @hasSection('meta')
+    @yield('meta')
+    @else
+    <link rel="canonical" href="{{ url()->current() }}">
+    @endif
 
   {{-- Google Analytics GA4 --}}
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-BD3JD8GZ2C"></script>

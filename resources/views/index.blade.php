@@ -16,9 +16,28 @@
 
   // カノニカル & prev/next（ページネーション）
   $isPaginated  = $items instanceof \Illuminate\Contracts\Pagination\Paginator;
-  $canonicalUrl = $isPaginated ? $items->url($pageNum) : url()->current();
+  $pageNum     = $isPaginated ? (int) $items->currentPage() : (int) request('page', 1);
+
+  // sort（指定がなければ favorite 扱い）
+  $sort = request('sort', 'favorite');
+
+  $canonicalUrl = url('/');
+
   $prevUrl      = $isPaginated ? $items->previousPageUrl() : null;
   $nextUrl      = $isPaginated ? $items->nextPageUrl()     : null;
+
+  // noindex 条件
+  $shouldNoindex = false;
+
+  // 2ページ目以降は noindex
+  if ($pageNum > 1) {
+      $shouldNoindex = true;
+  }
+
+  // sort がデフォルト以外なら noindex（任意だが推奨）
+  if (!empty($sort) && $sort !== 'favorite') {
+      $shouldNoindex = true;
+  }
 
   // サイト代表アイコン（任意で差し替え）
   $ogImage = asset('favicon.ico');
@@ -67,6 +86,9 @@
 
   {{-- カノニカル & ページネーション --}}
   <link rel="canonical" href="{{ $canonicalUrl }}">
+  @if($shouldNoindex)
+    <meta name="robots" content="noindex,follow">
+  @endif
   @if($prevUrl)<link rel="prev" href="{{ $prevUrl }}">@endif
   @if($nextUrl)<link rel="next" href="{{ $nextUrl }}">@endif
 

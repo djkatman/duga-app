@@ -10,10 +10,12 @@
   $isHome = request()->routeIs('home');
 
   // ★ 並び替えパラメータ
-  $sort = request()->get('sort'); // 'favorite' / 'new' など
+  $sort = request()->get('sort', 'favorite');
 
   // 総件数
   $isPaginated = $items instanceof \Illuminate\Contracts\Pagination\Paginator;
+  $pageNum     = $isPaginated ? (int)$items->currentPage() : 1;
+
   $total       = $isPaginated ? (int)$items->total() : (is_countable($items) ? count($items) : 0);
 
   // ラベル/語
@@ -31,21 +33,20 @@
      // ページネーションURL
   $pageNum = $isPaginated ? $items->currentPage() : 1;
 
-  // ★ 絞り込みページかどうか（type / id が入っている前提）
-  $isFilterPage = !$isHome && !empty($type) && !empty($filterId);
+  // フィルタ判定（browse.filter）
+  $isFilterPage = request()->routeIs('browse.filter') && !empty($type) && !empty($filterId);
 
+  // 検索（keyword）判定：type=keyword を検索扱いにする
+  $isKeyword = ($type === 'keyword') && !empty($filterId);
+
+  // ===== canonical は「常にベースへ集約」=====
   if ($isHome) {
-      // トップページ（/）の canonical は常に "/" に固定
-      $canonicalUrl = url('/');
+      $canonicalUrl = route('home');
   } elseif ($isFilterPage) {
-      // カテゴリ・レーベル・女優などの絞り込みページ
-      $canonicalParams = ['type' => $type, 'id' => $filterId];
-      if ($pageNum > 1) {
-          $canonicalParams['page'] = $pageNum;
-      }
-      $canonicalUrl = route('browse.filter', $canonicalParams);
+      // page / sort は canonical に入れない（重複対策）
+      $canonicalUrl = route('browse.filter', ['type' => $type, 'id' => $filterId]);
   } else {
-      // 念のためのフォールバック（想定外のルートなど）
+      // 念のため：今のURLを置く（ここに来ない設計が理想）
       $canonicalUrl = url()->current();
   }
 
@@ -156,14 +157,24 @@
   // ★ noindex を付ける条件
   $shouldNoindex = false;
 
-  // 並び順がデフォルト（favorite）以外なら noindex にする
-  if (!is_null($sort) && $sort !== '' && $sort !== 'favorite') {
+  // 1 page=2以降は noindex
+  if ($pageNum > 1) {
       $shouldNoindex = true;
   }
 
-  // 例：ページ番号が大きすぎる場合も noindex にしたいなら（任意）
+  // 2 sort がデフォルト(favorite)以外は noindex
+  if ($sort !== 'favorite') {
+      $shouldNoindex = true;
+  }
+
+  // 3 検索（keyword）は noindex（無限増殖対策）
+  if ($isKeyword) {
+      $shouldNoindex = true;
+  }
+
+  // 4 念のため page が異常に大きい場合
   if ($pageNum > 50) {
-       $shouldNoindex = true;
+      $shouldNoindex = true;
   }
 @endphp
 
@@ -190,7 +201,12 @@
   <meta name="twitter:description" content="{{ $desc }}">
   <meta name="twitter:image" content="{{ $ogImage }}">
 
-  <script type="application/ld+json">@json($jsonLdList, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)</script>
+  {{-- noindex時は ItemList を出さない（信号を揃える） --}}
+  @if(!$shouldNoindex)
+    <script type="application/ld+json">
+      @json($jsonLdList, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)
+    </script>
+  @endif
 @endsection
 
 @section('content')
@@ -204,6 +220,7 @@
   @include('partials.breadcrumbs', ['crumbs' => $crumbs])
 
   {{-- 見出し（件数入り）＋ 並び替え --}}
+
   <div class="mb-4 flex items-center justify-between">
     <h1 class="text-xl font-semibold">
       {{ $base }}（無料サンプル動画あり）
