@@ -813,6 +813,19 @@
         </div>
       @endif
 
+      {{-- バナー広告など --}}
+      <div class="bg-white rounded-lg shadow p-4">
+        <h2 class="text-lg font-semibold mb-1">ランキング参加中</h2>
+        <div class="flex items-center justify-center">
+          <div class="mr-4">
+            <a href="https://eroweb-ranking.com/in/NKh2K2XWE2cgr6Und49MsG1RY3kCk316DL6FbAai" target="_blank" rel="nofollow noopener sponsored"><img src="https://eroweb-ranking.com/images/banners/banner-88x31.png" alt="アダルトサイト総合ランキング" width="88" height="31" /></a>
+          </div>
+          <div class="ml-4">
+            <a href="http://www.adultblogranking.com/link/?id=2138441" title="アダルトブログランキング" target="_blank"><img alt="アダルトブログランキング" width="88" height="31" src="https://duga-adult.com/adultblogranking_banner_b.gif"></a>
+          </div>
+        </div>
+      </div>
+
       {{-- 右カラムなどに差し込み --}}
       {{-- 人気作品TOP10（タイトル＋サムネ） --}}
       @if(!empty($top7))
@@ -946,7 +959,6 @@
                 translate-y-full opacity-0 pointer-events-none transition-all duration-300">
       <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-3">
         <div class="min-w-0 flex-1">
-          <p class="text-[11px] text-gray-500 hidden sm:block">当サイトのリンクの一部は広告（アフィリエイトリンク）です。</p>
           <p class="text-xs sm:text-sm font-medium text-gray-800 truncate">『{{ $title }}』をDUGA公式サイトで視聴できます。</p>
           @if(!empty($performerNames))
             <p class="text-[11px] text-gray-600 hidden sm:block">主な出演：{{ implode('、', array_slice($performerNames, 0, 2)) }}</p>

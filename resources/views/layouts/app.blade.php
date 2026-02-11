@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>@yield('title', 'DUGAサンプル動画見放題')</title>
-
+  <link rel="alternate" type="application/rss+xml" title="DUGAサンプル動画見放題 &raquo; フィード" href="https://duga-adult.com/feed.xml"/>
   {{-- Tailwind / Vite --}}
   @vite(['resources/css/app.css', 'resources/js/app.js'])
   @yield('meta')
@@ -172,7 +172,7 @@
 </header>
 
   {{-- Main --}}
-  <main class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 pb-24">
+  <main class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
     @yield('content')
   </main>
 

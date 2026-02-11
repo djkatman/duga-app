@@ -17,14 +17,14 @@ class FeedController extends Controller
         $items = DugaProduct::query()
             ->where(function ($q) use ($now) {
                 $q
-                // release_date が「今日以前」
-                ->whereDate('release_date', '<=', $now)
-                // または release_date が NULL（未設定）
-                ->orWhereNull('release_date');
+                // open_date が「今日以前」
+                ->whereDate('open_date', '<=', $now)
+                // または open_date が NULL（未設定）
+                ->orWhereNull('open_date');
             })
-            // 並び順：release_date 優先 → created_at
-            ->orderByRaw('release_date IS NULL')
-            ->orderByDesc('release_date')
+            // 並び順：open_date 優先 → created_at
+            ->orderByRaw('open_date IS NULL')
+            ->orderByDesc('open_date')
             ->orderByDesc('created_at')
             ->limit(50)
             ->get();
@@ -34,7 +34,7 @@ class FeedController extends Controller
             'link'        => url('/'),
             'description' => '最新作品の更新情報',
             'language'    => 'ja',
-            'lastBuildDate' => optional($items->first()?->updated_at)->toRssString() ?? now()->toRssString(),
+            'lastBuildDate' => Carbon::now('Asia/Tokyo')->toRssString(),
         ];
 
         return response()
@@ -42,6 +42,11 @@ class FeedController extends Controller
                 'channel' => $channel,
                 'items'   => $items,
             ])
-            ->header('Content-Type', 'application/rss+xml; charset=UTF-8');
+            ->header('Content-Type', 'application/rss+xml; charset=UTF-8')
+
+            // ▼ キャッシュ完全禁止
+            ->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+            ->header('Pragma', 'no-cache')
+            ->header('Expires', '0');
     }
 }
